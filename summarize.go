@@ -1,0 +1,179 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	sortpkg "sort"
+	"strings"
+
+	openai "github.com/sashabaranov/go-openai"
+)
+
+type Summarizer interface {
+	Summarize(segments []Segment, frames []Frame) ([]Item, error)
+}
+
+type MockSummarizer struct{}
+
+type VolcengineSummarizer struct {
+	cli *openai.Client
+}
+
+func (m MockSummarizer) Summarize(segments []Segment, frames []Frame) ([]Item, error) {
+	// sort frames by timestamp
+	sortpkg.Slice(frames, func(i, j int) bool { return frames[i].TimestampSec < frames[j].TimestampSec })
+	items := make([]Item, 0, len(segments))
+	for idx, s := range segments {
+		mid := (s.Start + s.End) / 2
+		var framePath string
+		if len(frames) > 0 {
+			best := 0
+			bestDiff := 1e18
+			for i, f := range frames {
+				d := absFloat(f.TimestampSec - mid)
+				if d < bestDiff { bestDiff = d; best = i }
+			}
+			framePath = frames[best].Path
+		}
+		summary := fmt.Sprintf("Summary: %s", truncateWords(s.Text, 20))
+		items = append(items, Item{Start: s.Start, End: s.End, Text: s.Text, Summary: summary, FramePath: framePath})
+		_ = idx
+	}
+	return items, nil
+}
+
+func (v VolcengineSummarizer) Summarize(segments []Segment, frames []Frame) ([]Item, error) {
+	// sort frames by timestamp
+	sortpkg.Slice(frames, func(i, j int) bool { return frames[i].TimestampSec < frames[j].TimestampSec })
+	items := make([]Item, 0, len(segments))
+	
+	config, err := loadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %v", err)
+	}
+	
+	for _, s := range segments {
+		mid := (s.Start + s.End) / 2
+		var framePath string
+		if len(frames) > 0 {
+			best := 0
+			bestDiff := 1e18
+			for i, f := range frames {
+				d := absFloat(f.TimestampSec - mid)
+				if d < bestDiff { bestDiff = d; best = i }
+			}
+			framePath = frames[best].Path
+		}
+		
+		// Generate summary using Volcengine API
+		summary, err := v.generateSummaryForSegment(s.Text, config.ChatModel)
+		if err != nil {
+			// Fallback to simple summary if API fails
+			summary = fmt.Sprintf("Summary: %s", truncateWords(s.Text, 20))
+		}
+		
+		items = append(items, Item{Start: s.Start, End: s.End, Text: s.Text, Summary: summary, FramePath: framePath})
+	}
+	return items, nil
+}
+
+func (v VolcengineSummarizer) generateSummaryForSegment(text, model string) (string, error) {
+	ctx := context.Background()
+	req := openai.ChatCompletionRequest{
+		Model: model,
+		Messages: []openai.ChatCompletionMessage{
+			{
+				Role:    openai.ChatMessageRoleSystem,
+				Content: "你是一个专业的视频内容摘要助手。请为给定的视频片段文本生成简洁、准确的摘要，突出关键信息和要点。摘要应该在50字以内。",
+			},
+			{
+				Role:    openai.ChatMessageRoleUser,
+				Content: fmt.Sprintf("请为以下视频片段生成摘要：\n\n%s", text),
+			},
+		},
+		MaxTokens: 100,
+	}
+	
+	resp, err := v.cli.CreateChatCompletion(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("chat completion failed: %v", err)
+	}
+	
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("no response choices")
+	}
+	
+	return strings.TrimSpace(resp.Choices[0].Message.Content), nil
+}
+
+func pickSummaryProvider() Summarizer {
+	config, err := loadConfig()
+	if err != nil || !config.HasValidAPI() {
+		fmt.Println("Warning: No valid API configuration found, using mock summarizer")
+		return MockSummarizer{}
+	}
+	
+	cli := openaiClient()
+	
+	return VolcengineSummarizer{cli: cli}
+}
+
+func summarizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	var req SummarizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.JobID == "" { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id required"}); return }
+	jobDir := filepath.Join(dataRoot(), req.JobID)
+	segments := req.Segments
+	if len(segments) == 0 {
+		b, err := os.ReadFile(filepath.Join(jobDir, "transcript.json"))
+		if err != nil { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "segments missing and transcript.json not found"}); return }
+		if err := json.Unmarshal(b, &segments); err != nil { writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid transcript.json"}); return }
+	}
+	frames := []Frame{}
+	framesDir := filepath.Join(jobDir, "frames")
+	if fi, err := os.Stat(framesDir); err == nil && fi.IsDir() {
+		fs, _ := enumerateFramesWithTimestamps(framesDir, 5)
+		frames = fs
+	}
+	prov := pickSummaryProvider()
+	items, err := prov.Summarize(segments, frames)
+	if err != nil { writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()}); return }
+	_ = os.WriteFile(filepath.Join(jobDir, "items.json"), mustJSON(items), 0644)
+	writeJSON(w, http.StatusOK, SummarizeResponse{JobID: req.JobID, Items: items})
+}
+
+// generateSummary generates summaries for segments with frames
+func generateSummary(segments []Segment, jobID string) ([]Item, error) {
+	jobDir := filepath.Join(dataRoot(), jobID)
+	
+	// Load frames if available
+	frames := []Frame{}
+	framesDir := filepath.Join(jobDir, "frames")
+	if fi, err := os.Stat(framesDir); err == nil && fi.IsDir() {
+		fs, _ := enumerateFramesWithTimestamps(framesDir, 5)
+		frames = fs
+	}
+	
+	// Generate summaries
+	prov := pickSummaryProvider()
+	items, err := prov.Summarize(segments, frames)
+	if err != nil {
+		return nil, fmt.Errorf("generate summary: %v", err)
+	}
+	
+	// Persist items
+	_ = os.WriteFile(filepath.Join(jobDir, "items.json"), mustJSON(items), 0644)
+	
+	return items, nil
+}
