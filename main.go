@@ -48,9 +48,18 @@ func main() {
 	http.HandleFunc("/summarize", summarizeHandler)
 	http.HandleFunc("/store", storeHandler)
 	http.HandleFunc("/query", queryHandler)
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	
+	// Enhanced health monitoring endpoints
+	http.HandleFunc("/health", healthCheckHandler)
+	http.HandleFunc("/stats", statsHandler)
+	http.HandleFunc("/diagnostics", diagnosticsHandler)
+	
+	// Resource management endpoints
+	http.HandleFunc("/resources", resourceHandler)
+	
+	// File integrity endpoints
+	http.HandleFunc("/integrity", integrityHandler)
+	http.HandleFunc("/repair", repairHandler)
 
 	// Check for benchmark mode
 	if len(os.Args) > 1 && os.Args[1] == "benchmark" {
@@ -58,24 +67,43 @@ func main() {
 		return
 	}
 	
-	// Check for integration test mode
-	if len(os.Args) > 1 && os.Args[1] == "test" {
-		// Start server in background
-		go func() {
-			addr := ":8080"
-			if v := os.Getenv("PORT"); v != "" {
-				addr = ":" + v
-			}
-			log.Printf("Server listening on %s", addr)
-			log.Fatal(http.ListenAndServe(addr, nil))
-		}()
-		
-		// Wait for server to start
-		time.Sleep(2 * time.Second)
-		
-		// Run integration tests
-		TestIntegration()
-		return
+	// Check for command line arguments
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "test":
+			// 集成测试模式
+			log.Println("启动集成测试模式...")
+			
+			// 在后台启动服务器
+			go func() {
+				addr := ":8080"
+				if v := os.Getenv("PORT"); v != "" {
+					addr = ":" + v
+				}
+				log.Printf("Server listening on %s", addr)
+				log.Fatal(http.ListenAndServe(addr, nil))
+			}()
+			
+			// 等待服务器启动
+			time.Sleep(2 * time.Second)
+			
+			// 运行集成测试
+			TestIntegration()
+			return
+			
+		case "perf":
+			// 性能测试模式
+			log.Println("启动性能测试模式...")
+			TestPerformance()
+			return
+			
+		default:
+			log.Printf("未知参数: %s\n", os.Args[1])
+			log.Println("可用参数:")
+			log.Println("  test - 运行集成测试")
+			log.Println("  perf - 运行性能测试")
+			return
+		}
 	}
 
 	addr := ":8080"

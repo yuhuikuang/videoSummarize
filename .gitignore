@@ -1,6 +1,7 @@
 # If you prefer the allow list template instead of the deny list, see community template:
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
+
+# ==== Go Binaries and Build Artifacts ====
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -11,29 +12,140 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Code coverage profiles and other test artifacts
+# Output of the go coverage tool, specifically when used with LiteIDE
 *.out
 coverage.*
 *.coverprofile
 profile.cov
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Dependency directories
+vendor/
 
 # Go workspace file
 go.work
 go.work.sum
 
-# env file
+# ==== Configuration and Sensitive Files ====
+# Environment files
 .env
+.env.*
+!.env.example
 
 # Configuration files with sensitive data
 config.json
+*.config
+.credentials
 
-# Editor/IDE
-# .idea/
-# .vscode/
-
+# ==== Video and Media Files ====
+# Video files (test materials)
 *.mp4
-.trae
+*.avi
+*.mov
+*.mkv
+*.flv
+*.webm
+*.m4v
+
+# Audio files
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+
+# Image files (except small icons/logos)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+
+# ==== Runtime Data and Temporary Files ====
+# Application data directory
 data/
+tmp/
+temp/
+*.tmp
+
+# Log files
+*.log
+logs/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Performance and analysis files
+performance_*.json
+analysis_*.json
+*.prof
+*.pprof
+
+# ==== IDE and Editor Files ====
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# ==== OS Generated Files ====
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ==== Application Specific ====
+# Video processing temp files
+frames/
+audio/
+*.frames
+
+# Backup directories
+backup_*/
+*.backup
+
+# Model files (if any)
+*.model
+*.pt
+*.pth
+*.onnx
+
+# Trae development tool
+.trae/
+
+# Docker volumes and data
+docker-data/
+postgres-data/
+milvus-data/

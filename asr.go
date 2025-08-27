@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -256,9 +258,19 @@ func transcribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var req TranscribeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
+
+	// Allocate resources for transcription
+	rm := GetResourceManager()
+	_, err := rm.AllocateResources(req.JobID, "transcribe", "normal")
+	if err != nil {
+		log.Printf("Failed to allocate resources for transcription job %s: %v", req.JobID, err)
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("Resource allocation failed: %v", err)})
+		return
+	}
+	defer rm.ReleaseResources(req.JobID)
 	if req.JobID == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id required"})
 		return
@@ -266,12 +278,16 @@ func transcribeHandler(w http.ResponseWriter, r *http.Request) {
 	jobDir := filepath.Join(dataRoot(), req.JobID)
 	audio := req.AudioPath
 	if audio == "" { audio = filepath.Join(jobDir, "audio.wav") }
+	
+	rm.UpdateJobStep(req.JobID, "transcription")
 	prov := pickASRProvider()
 	segs, err := prov.Transcribe(audio)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	rm.UpdateJobStep(req.JobID, "transcription_completed")
+	
 	// persist
 	_ = os.WriteFile(filepath.Join(jobDir, "transcript.json"), mustJSON(segs), 0644)
 	writeJSON(w, http.StatusOK, TranscribeResponse{JobID: req.JobID, Segments: segs})
@@ -290,4 +306,198 @@ func transcribeAudio(audioPath, jobID string) ([]Segment, error) {
 	_ = os.WriteFile(filepath.Join(jobDir, "transcript.json"), mustJSON(segs), 0644)
 
 	return segs, nil
+}
+
+// Enhanced ASR functions with retry and error handling
+
+// ASRConfig ASR配置
+type ASRConfig struct {
+	Provider     string `json:"provider"`
+	MaxRetries   int    `json:"max_retries"`
+	RetryDelay   int    `json:"retry_delay_seconds"`
+	Timeout      int    `json:"timeout_seconds"`
+	Language     string `json:"language"`
+	ModelSize    string `json:"model_size"`
+	GPUEnabled   bool   `json:"gpu_enabled"`
+}
+
+// getASRConfig 获取ASR配置
+func getASRConfig() ASRConfig {
+	return ASRConfig{
+		Provider:   strings.ToLower(strings.TrimSpace(os.Getenv("ASR_PROVIDER"))),
+		MaxRetries: getEnvInt("ASR_MAX_RETRIES", 3),
+		RetryDelay: getEnvInt("ASR_RETRY_DELAY", 5),
+		Timeout:    getEnvInt("ASR_TIMEOUT", 300),
+		Language:   getEnvString("ASR_LANGUAGE", "zh"),
+		ModelSize:  getEnvString("WHISPER_MODEL", "base"),
+		GPUEnabled: getEnvBool("ASR_GPU_ENABLED", true),
+	}
+}
+
+// transcribeAudioEnhanced 增强的音频转录功能，支持重试和错误恢复
+func transcribeAudioEnhanced(audioPath, jobID string) ([]Segment, error) {
+	config := getASRConfig()
+	log.Printf("Starting ASR transcription for job %s with provider: %s", jobID, config.Provider)
+	
+	// 保存检查点
+	checkpoint := &ProcessingCheckpoint{
+		JobID:       jobID,
+		StartTime:   time.Now(),
+		CurrentStep: "asr_transcription",
+	}
+	saveCheckpoint(filepath.Join(dataRoot(), jobID), checkpoint)
+	
+	var lastErr error
+	for attempt := 1; attempt <= config.MaxRetries; attempt++ {
+		log.Printf("ASR attempt %d/%d for job %s", attempt, config.MaxRetries, jobID)
+		
+		start := time.Now()
+		segs, err := transcribeWithTimeout(audioPath, config)
+		duration := time.Since(start)
+		
+		if err == nil {
+			// 成功
+			log.Printf("ASR transcription successful for job %s in %v, found %d segments", 
+				jobID, duration, len(segs))
+			
+			// 保存转录结果
+			jobDir := filepath.Join(dataRoot(), jobID)
+			transcriptPath := filepath.Join(jobDir, "transcript.json")
+			if err := os.WriteFile(transcriptPath, mustJSON(segs), 0644); err != nil {
+				log.Printf("Warning: Failed to save transcript for job %s: %v", jobID, err)
+			}
+			
+			// 更新检查点
+			checkpoint.CurrentStep = "completed"
+			checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "asr_transcription")
+			saveCheckpoint(filepath.Join(dataRoot(), jobID), checkpoint)
+			
+			return segs, nil
+		}
+		
+		// 失败处理
+		lastErr = err
+		log.Printf("ASR attempt %d failed for job %s: %v", attempt, jobID, err)
+		
+		// 更新检查点
+		checkpoint.Errors = append(checkpoint.Errors, err.Error())
+		saveCheckpoint(filepath.Join(dataRoot(), jobID), checkpoint)
+		
+		// 如果不是最后一次尝试，等待后重试
+		if attempt < config.MaxRetries {
+			log.Printf("Waiting %d seconds before retry...", config.RetryDelay)
+			time.Sleep(time.Duration(config.RetryDelay) * time.Second)
+		}
+	}
+	
+	// 所有重试都失败，标记为失败
+	checkpoint.CurrentStep = "failed"
+	checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("All %d attempts failed. Last error: %v", config.MaxRetries, lastErr))
+	saveCheckpoint(filepath.Join(dataRoot(), jobID), checkpoint)
+	
+	return nil, fmt.Errorf("ASR transcription failed after %d attempts: %v", config.MaxRetries, lastErr)
+}
+
+// transcribeWithTimeout 带超时的转录
+func transcribeWithTimeout(audioPath string, config ASRConfig) ([]Segment, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Timeout)*time.Second)
+	defer cancel()
+	
+	resultChan := make(chan transcribeResult, 1)
+	
+	go func() {
+		prov := pickASRProviderWithConfig(config)
+		segs, err := prov.Transcribe(audioPath)
+		resultChan <- transcribeResult{segments: segs, err: err}
+	}()
+	
+	select {
+	case result := <-resultChan:
+		return result.segments, result.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("ASR transcription timeout after %d seconds", config.Timeout)
+	}
+}
+
+type transcribeResult struct {
+	segments []Segment
+	err      error
+}
+
+// pickASRProviderWithConfig 根据配置选择ASR提供者
+func pickASRProviderWithConfig(config ASRConfig) ASRProvider {
+	switch config.Provider {
+	case "mock":
+		return MockASR{}
+	case "api-whisper":
+		cfg, err := loadConfig()
+		if err != nil || !cfg.HasValidAPI() {
+			log.Printf("Warning: API configuration not found for API Whisper, using LocalWhisperASR")
+			return LocalWhisperASR{}
+		}
+		return WhisperASR{cli: openaiClient()}
+	case "volcengine":
+		cfg, err := loadConfig()
+		if err != nil || !cfg.HasValidAPI() {
+			log.Printf("Warning: API configuration not found for Volcengine ASR, using LocalWhisperASR")
+			return LocalWhisperASR{}
+		}
+		return VolcengineASR{cli: openaiClient()}
+	default:
+		// 默认使用本地Whisper
+		log.Printf("Using Local Whisper ASR (provider: %s)", config.Provider)
+		return LocalWhisperASR{}
+	}
+}
+
+// validateAudioFile 验证音频文件
+func validateAudioFile(audioPath string) error {
+	if _, err := os.Stat(audioPath); os.IsNotExist(err) {
+		return fmt.Errorf("audio file does not exist: %s", audioPath)
+	}
+	
+	// 检查文件大小
+	info, err := os.Stat(audioPath)
+	if err != nil {
+		return fmt.Errorf("cannot stat audio file: %v", err)
+	}
+	
+	if info.Size() == 0 {
+		return fmt.Errorf("audio file is empty: %s", audioPath)
+	}
+	
+	// 检查文件格式（通过扩展名）
+	ext := strings.ToLower(filepath.Ext(audioPath))
+	allowedExts := []string{".wav", ".mp3", ".m4a", ".flac", ".ogg"}
+	for _, allowedExt := range allowedExts {
+		if ext == allowedExt {
+			return nil
+		}
+	}
+	
+	return fmt.Errorf("unsupported audio format: %s (supported: %v)", ext, allowedExts)
+}
+
+// Helper functions for environment variables
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvString(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		return strings.ToLower(value) == "true" || value == "1"
+	}
+	return defaultValue
 }
