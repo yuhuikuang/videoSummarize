@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 
@@ -323,6 +324,17 @@ func newPgVectorStore() (*PgVectorStore, error) {
 		return nil, err
 	}
 
+	// 启动索引维护机制
+	s.ScheduleIndexMaintenance()
+
+	// 初始检查索引状态
+	go func() {
+		time.Sleep(5 * time.Second) // 等待表初始化完成
+		if err := s.AutoRebuildIndexIfNeeded(); err != nil {
+			fmt.Printf("Initial index check failed: %v\n", err)
+		}
+	}()
+
 	return s, nil
 }
 
@@ -436,11 +448,9 @@ func (s *PgVectorStore) ensureTable() error {
 		}
 	}
 
-	// Create vector index
-	vectorIndexQuery := `CREATE INDEX IF NOT EXISTS idx_video_segments_embedding ON video_segments USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);`
-	if _, err := s.conn.Exec(ctx, vectorIndexQuery); err != nil {
-		// Vector index creation might fail if there's no data, that's okay
-		fmt.Printf("Warning: failed to create vector index (this is normal if table is empty): %v\n", err)
+	// Create vector index with improved parameters
+	if err := s.createOptimizedVectorIndex(); err != nil {
+		fmt.Printf("Warning: failed to create optimized vector index: %v\n", err)
 	}
 
 	return nil
@@ -451,6 +461,107 @@ func (s *PgVectorStore) openaiClient() (*openai.Client, error) {
 		s.oa = openaiClient()
 	}
 	return s.oa, nil
+}
+
+// createOptimizedVectorIndex 创建优化的向量索引
+func (s *PgVectorStore) createOptimizedVectorIndex() error {
+	ctx := context.Background()
+
+	// 检查表中是否有数据
+	var count int
+	if err := s.conn.QueryRow(ctx, "SELECT COUNT(*) FROM video_segments WHERE embedding IS NOT NULL").Scan(&count); err != nil {
+		return fmt.Errorf("failed to count segments: %w", err)
+	}
+
+	if count == 0 {
+		fmt.Println("No embeddings found, skipping vector index creation")
+		return nil
+	}
+
+	// 根据数据量动态调整索引参数
+	lists := 100
+	if count > 10000 {
+		lists = int(count / 100) // 每100个向量一个列表
+		if lists > 1000 {
+			lists = 1000 // 最大1000个列表
+		}
+	} else if count < 1000 {
+		lists = 10 // 小数据集使用较少列表
+	}
+
+	// 删除现有索引
+	dropQuery := `DROP INDEX IF EXISTS idx_video_segments_embedding;`
+	if _, err := s.conn.Exec(ctx, dropQuery); err != nil {
+		fmt.Printf("Warning: failed to drop existing vector index: %v\n", err)
+	}
+
+	// 创建优化的向量索引
+	vectorIndexQuery := fmt.Sprintf(`
+		CREATE INDEX idx_video_segments_embedding 
+		ON video_segments 
+		USING ivfflat (embedding vector_cosine_ops) 
+		WITH (lists = %d);
+	`, lists)
+
+	if _, err := s.conn.Exec(ctx, vectorIndexQuery); err != nil {
+		return fmt.Errorf("failed to create vector index: %w", err)
+	}
+
+	fmt.Printf("Created optimized vector index with %d lists for %d embeddings\n", lists, count)
+	return nil
+}
+
+// RebuildVectorIndex 重建向量索引
+func (s *PgVectorStore) RebuildVectorIndex() error {
+	fmt.Println("Rebuilding vector index...")
+	return s.createOptimizedVectorIndex()
+}
+
+// GetIndexStatus 获取索引状态
+func (s *PgVectorStore) GetIndexStatus() (map[string]interface{}, error) {
+	ctx := context.Background()
+	status := make(map[string]interface{})
+
+	// 检查向量索引是否存在
+	var indexExists bool
+	indexQuery := `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_indexes 
+			WHERE tablename = 'video_segments' 
+			AND indexname = 'idx_video_segments_embedding'
+		);
+	`
+	if err := s.conn.QueryRow(ctx, indexQuery).Scan(&indexExists); err != nil {
+		return nil, fmt.Errorf("failed to check index existence: %w", err)
+	}
+
+	status["vector_index_exists"] = indexExists
+
+	// 获取表统计信息
+	var totalSegments, segmentsWithEmbeddings int
+	if err := s.conn.QueryRow(ctx, "SELECT COUNT(*) FROM video_segments").Scan(&totalSegments); err != nil {
+		return nil, fmt.Errorf("failed to count total segments: %w", err)
+	}
+	if err := s.conn.QueryRow(ctx, "SELECT COUNT(*) FROM video_segments WHERE embedding IS NOT NULL").Scan(&segmentsWithEmbeddings); err != nil {
+		return nil, fmt.Errorf("failed to count segments with embeddings: %w", err)
+	}
+
+	status["total_segments"] = totalSegments
+	status["segments_with_embeddings"] = segmentsWithEmbeddings
+	status["embedding_coverage"] = float64(segmentsWithEmbeddings) / float64(totalSegments) * 100
+
+	// 检查索引大小
+	if indexExists {
+		var indexSize string
+		sizeQuery := `
+			SELECT pg_size_pretty(pg_relation_size('idx_video_segments_embedding'));
+		`
+		if err := s.conn.QueryRow(ctx, sizeQuery).Scan(&indexSize); err == nil {
+			status["index_size"] = indexSize
+		}
+	}
+
+	return status, nil
 }
 
 func (s *PgVectorStore) embed(text string) ([]float32, error) {
@@ -474,6 +585,44 @@ func (s *PgVectorStore) embed(text string) ([]float32, error) {
 	if err != nil { return nil, fmt.Errorf("embedding API failed: %v", err) }
 	if len(resp.Data) == 0 { return nil, fmt.Errorf("no embeddings returned") }
 	return resp.Data[0].Embedding, nil
+}
+
+// AutoRebuildIndexIfNeeded 根据需要自动重建索引
+func (s *PgVectorStore) AutoRebuildIndexIfNeeded() error {
+	status, err := s.GetIndexStatus()
+	if err != nil {
+		return fmt.Errorf("failed to get index status: %w", err)
+	}
+
+	// 如果索引不存在且有嵌入数据，则重建索引
+	if !status["vector_index_exists"].(bool) && status["segments_with_embeddings"].(int) > 0 {
+		fmt.Println("Vector index missing but embeddings exist, rebuilding...")
+		return s.RebuildVectorIndex()
+	}
+
+	// 如果嵌入覆盖率低于50%，可能需要重建
+	if coverage, ok := status["embedding_coverage"].(float64); ok && coverage < 50.0 {
+		fmt.Printf("Low embedding coverage (%.1f%%), consider rebuilding index\n", coverage)
+	}
+
+	return nil
+}
+
+// ScheduleIndexMaintenance 定期索引维护
+func (s *PgVectorStore) ScheduleIndexMaintenance() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute) // 每30分钟检查一次
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if err := s.AutoRebuildIndexIfNeeded(); err != nil {
+					fmt.Printf("Auto index rebuild failed: %v\n", err)
+				}
+			}
+		}
+	}()
 }
 
 func (s *PgVectorStore) Upsert(jobID string, items []Item) int {

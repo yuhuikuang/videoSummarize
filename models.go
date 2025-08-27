@@ -56,12 +56,17 @@ type StoreResponse struct {
 }
 
 type Hit struct {
-	Score    float64 `json:"score"`
-	Start    float64 `json:"start"`
-	End      float64 `json:"end"`
-	Text     string  `json:"text"`
-	Summary  string  `json:"summary"`
-	FramePath string `json:"frame_path"`
+	SegmentID string  `json:"segment_id"`
+	VideoID   string  `json:"video_id"`
+	JobID     string  `json:"job_id"`
+	Score     float64 `json:"score"`
+	Start     float64 `json:"start"`
+	End       float64 `json:"end"`
+	StartTime float64 `json:"start_time"`
+	EndTime   float64 `json:"end_time"`
+	Text      string  `json:"text"`
+	Summary   string  `json:"summary"`
+	FramePath string  `json:"frame_path"`
 }
 
 type QueryRequest struct {

@@ -10,17 +10,58 @@ import (
 	"time"
 )
 
+// 全局变量
+var (
+	enhancedResourceManager *EnhancedResourceManager
+	parallelProcessor       *ParallelProcessor
+	enhancedVectorStore     *EnhancedVectorStore
+)
+
+// initEnhancedVectorStore 初始化增强向量存储
+func initEnhancedVectorStore() error {
+	var err error
+	enhancedVectorStore, err = NewEnhancedVectorStore()
+	if err != nil {
+		return fmt.Errorf("failed to create enhanced vector store: %v", err)
+	}
+	log.Printf("Enhanced vector store initialized successfully")
+	return nil
+}
+
 func main() {
 	if err := os.MkdirAll(dataRoot(), 0755); err != nil {
 		log.Fatalf("failed to create data dir: %v", err)
 	}
 
+	// 初始化增强向量存储
+	if err := initEnhancedVectorStore(); err != nil {
+		log.Fatalf("failed to init enhanced vector store: %v", err)
+	}
+
+	// 初始化传统向量存储作为后备
 	if err := initVectorStore(); err != nil {
 		log.Fatalf("failed to init vector store: %v", err)
 	}
 	backend := os.Getenv("STORE")
 	if backend == "" { backend = "memory" }
 	log.Printf("Vector store initialized: %s", backend)
+
+	// 初始化增强资源管理器
+	enhancedResourceManager = NewEnhancedResourceManager()
+	log.Printf("Enhanced Resource Manager initialized")
+
+	// 初始化并行处理器
+	parallelProcessor = NewParallelProcessor(enhancedResourceManager)
+	log.Printf("Parallel Processor initialized")
+
+	// 初始化增强向量存储
+	var err error
+	enhancedStore, err = NewEnhancedVectorStore()
+	if err != nil {
+		log.Printf("Warning: Failed to initialize enhanced vector store: %v", err)
+	} else {
+		log.Printf("Enhanced Vector Store initialized")
+	}
 
 	// Initialize GPU acceleration
 	config, configErr := loadConfig()
@@ -49,6 +90,11 @@ func main() {
 	http.HandleFunc("/store", storeHandler)
 	http.HandleFunc("/query", queryHandler)
 	
+	// Enhanced processing endpoints
+	http.HandleFunc("/process-parallel", processParallelHandler)
+	http.HandleFunc("/process-batch", processBatchHandler)
+	http.HandleFunc("/pipeline-status", pipelineStatusHandler)
+	
 	// Enhanced health monitoring endpoints
 	http.HandleFunc("/health", healthCheckHandler)
 	http.HandleFunc("/stats", statsHandler)
@@ -56,10 +102,24 @@ func main() {
 	
 	// Resource management endpoints
 	http.HandleFunc("/resources", resourceHandler)
+	http.HandleFunc("/enhanced-resources", enhancedResourceHandler)
+	http.HandleFunc("/processor-status", processorStatusHandler)
 	
 	// File integrity endpoints
 	http.HandleFunc("/integrity", integrityHandler)
 	http.HandleFunc("/repair", repairHandler)
+	
+	// Vector store management endpoints
+	http.HandleFunc("/vector-rebuild", vectorRebuildHandler)
+	http.HandleFunc("/vector-status", vectorStatusHandler)
+	http.HandleFunc("/index-status", indexStatusHandler)
+	http.HandleFunc("/index-rebuild", indexRebuildHandler)
+	http.HandleFunc("/index-optimize", indexOptimizeHandler)
+	http.HandleFunc("/search-strategies", searchStrategiesHandler)
+
+	// 批量配置和性能指标路由
+	http.HandleFunc("/batch-config", batchConfigHandler)
+	http.HandleFunc("/batch-metrics", batchMetricsHandler)
 
 	// Check for benchmark mode
 	if len(os.Args) > 1 && os.Args[1] == "benchmark" {
@@ -105,6 +165,21 @@ func main() {
 			return
 		}
 	}
+
+	// 设置优雅关闭
+	defer func() {
+		log.Println("Shutting down services...")
+		if parallelProcessor != nil {
+			parallelProcessor.Shutdown()
+		}
+		if enhancedResourceManager != nil {
+			enhancedResourceManager.Shutdown()
+		}
+		if enhancedVectorStore != nil {
+			enhancedVectorStore.Shutdown()
+		}
+		log.Println("All services shut down gracefully")
+	}()
 
 	addr := ":8080"
 	if v := os.Getenv("PORT"); v != "" {
