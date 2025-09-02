@@ -1,0 +1,218 @@
+[
+  {
+    "test_group": 1,
+    "video_file": "videos/3min.mp4",
+    "success": true,
+    "result": {
+      "video_file": "videos/3min.mp4",
+      "video_length": 180000000000,
+      "mode": "CPU",
+      "test_round": 1,
+      "total_time": 54951566300,
+      "timestamp": "2025-09-02T15:42:28.9212874+08:00"
+    },
+    "step_results": {
+      "asr": {
+        "step_name": "语音识别",
+        "success": true,
+        "duration": 54000258800
+      },
+      "preprocess": {
+        "step_name": "预处理",
+        "success": true,
+        "duration": 250562000
+      },
+      "store": {
+        "step_name": "向量存储",
+        "success": true,
+        "duration": 200433200
+      },
+      "summarize": {
+        "step_name": "摘要生成",
+        "success": true,
+        "duration": 500312300
+      }
+    },
+    "timestamp": "2025-09-02T15:41:33.9697211+08:00"
+  },
+  {
+    "test_group": 1,
+    "video_file": "videos/ai_10min.mp4",
+    "success": true,
+    "result": {
+      "video_file": "videos/ai_10min.mp4",
+      "video_length": 600000000000,
+      "mode": "CPU",
+      "test_round": 1,
+      "total_time": 180991480900,
+      "timestamp": "2025-09-02T15:45:31.9129933+08:00"
+    },
+    "step_results": {
+      "asr": {
+        "step_name": "语音识别",
+        "success": true,
+        "duration": 180000043200
+      },
+      "preprocess": {
+        "step_name": "预处理",
+        "success": true,
+        "duration": 290456100
+      },
+      "store": {
+        "step_name": "向量存储",
+        "success": true,
+        "duration": 200524600
+      },
+      "summarize": {
+        "step_name": "摘要生成",
+        "success": true,
+        "duration": 500457000
+      }
+    },
+    "timestamp": "2025-09-02T15:42:30.9215124+08:00"
+  },
+  {
+    "test_group": 1,
+    "video_file": "videos/ai_20min.mp4",
+    "success": true,
+    "result": {
+      "video_file": "videos/ai_20min.mp4",
+      "video_length": 1200000000000,
+      "mode": "CPU",
+      "test_round": 1,
+      "total_time": 360991523100,
+      "timestamp": "2025-09-02T15:51:34.904901+08:00"
+    },
+    "step_results": {
+      "asr": {
+        "step_name": "语音识别",
+        "success": true,
+        "duration": 360000500700
+      },
+      "preprocess": {
+        "step_name": "预处理",
+        "success": true,
+        "duration": 290499500
+      },
+      "store": {
+        "step_name": "向量存储",
+        "success": true,
+        "duration": 200271500
+      },
+      "summarize": {
+        "step_name": "摘要生成",
+        "success": true,
+        "duration": 500251400
+      }
+    },
+    "timestamp": "2025-09-02T15:45:33.9133779+08:00"
+  },
+  {
+    "test_group": 2,
+    "video_file": "videos/3min.mp4",
+    "success": true,
+    "result": {
+      "video_file": "videos/3min.mp4",
+      "video_length": 180000000000,
+      "mode": "CPU",
+      "test_round": 2,
+      "total_time": 54952110000,
+      "timestamp": "2025-09-02T15:52:41.8581837+08:00"
+    },
+    "step_results": {
+      "asr": {
+        "step_name": "语音识别",
+        "success": true,
+        "duration": 54000317000
+      },
+      "preprocess": {
+        "step_name": "预处理",
+        "success": true,
+        "duration": 251086700
+      },
+      "store": {
+        "step_name": "向量存储",
+        "success": true,
+        "duration": 200265800
+      },
+      "summarize": {
+        "step_name": "摘要生成",
+        "success": true,
+        "duration": 500440500
+      }
+    },
+    "timestamp": "2025-09-02T15:51:46.9060737+08:00"
+  },
+  {
+    "test_group": 2,
+    "video_file": "videos/ai_10min.mp4",
+    "success": true,
+    "result": {
+      "video_file": "videos/ai_10min.mp4",
+      "video_length": 600000000000,
+      "mode": "CPU",
+      "test_round": 2,
+      "total_time": 180991668300,
+      "timestamp": "2025-09-02T15:55:44.8500064+08:00"
+    },
+    "step_results": {
+      "asr": {
+        "step_name": "语音识别",
+        "success": true,
+        "duration": 180000403700
+      },
+      "preprocess": {
+        "step_name": "预处理",
+        "success": true,
+        "duration": 290447900
+      },
+      "store": {
+        "step_name": "向量存储",
+        "success": true,
+        "duration": 200352100
+      },
+      "summarize": {
+        "step_name": "摘要生成",
+        "success": true,
+        "duration": 500464600
+      }
+    },
+    "timestamp": "2025-09-02T15:52:43.8583381+08:00"
+  },
+  {
+    "test_group": 2,
+    "video_file": "videos/ai_20min.mp4",
+    "success": true,
+    "result": {
+      "video_file": "videos/ai_20min.mp4",
+      "video_length": 1200000000000,
+      "mode": "CPU",
+      "test_round": 2,
+      "total_time": 360991307200,
+      "timestamp": "2025-09-02T16:01:47.8418483+08:00"
+    },
+    "step_results": {
+      "asr": {
+        "step_name": "语音识别",
+        "success": true,
+        "duration": 360000210900
+      },
+      "preprocess": {
+        "step_name": "预处理",
+        "success": true,
+        "duration": 290411400
+      },
+      "store": {
+        "step_name": "向量存储",
+        "success": true,
+        "duration": 200607600
+      },
+      "summarize": {
+        "step_name": "摘要生成",
+        "success": true,
+        "duration": 500077300
+      }
+    },
+    "timestamp": "2025-09-02T15:55:46.8505411+08:00"
+  }
+]

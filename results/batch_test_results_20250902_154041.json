@@ -1,0 +1,50 @@
+[
+  {
+    "test_group": 1,
+    "video_file": "3min.mp4",
+    "success": false,
+    "error": "文件不存在",
+    "step_results": null,
+    "timestamp": "2025-09-02T15:40:31.7421043+08:00"
+  },
+  {
+    "test_group": 1,
+    "video_file": "ai_10min.mp4",
+    "success": false,
+    "error": "文件不存在",
+    "step_results": null,
+    "timestamp": "2025-09-02T15:40:31.7426303+08:00"
+  },
+  {
+    "test_group": 1,
+    "video_file": "ai_20min.mp4",
+    "success": false,
+    "error": "文件不存在",
+    "step_results": null,
+    "timestamp": "2025-09-02T15:40:31.7426303+08:00"
+  },
+  {
+    "test_group": 2,
+    "video_file": "3min.mp4",
+    "success": false,
+    "error": "文件不存在",
+    "step_results": null,
+    "timestamp": "2025-09-02T15:40:41.7431182+08:00"
+  },
+  {
+    "test_group": 2,
+    "video_file": "ai_10min.mp4",
+    "success": false,
+    "error": "文件不存在",
+    "step_results": null,
+    "timestamp": "2025-09-02T15:40:41.7438905+08:00"
+  },
+  {
+    "test_group": 2,
+    "video_file": "ai_20min.mp4",
+    "success": false,
+    "error": "文件不存在",
+    "step_results": null,
+    "timestamp": "2025-09-02T15:40:41.7438905+08:00"
+  }
+]

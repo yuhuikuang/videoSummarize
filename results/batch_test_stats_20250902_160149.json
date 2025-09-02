@@ -1,0 +1,64 @@
+{
+  "total_tests": 6,
+  "successful_tests": 6,
+  "failed_tests": 0,
+  "success_rate": 100,
+  "step_success_rates": {
+    "asr": 100,
+    "preprocess": 100,
+    "store": 100,
+    "summarize": 100
+  },
+  "video_stats": {
+    "videos/3min.mp4": {
+      "video_file": "videos/3min.mp4",
+      "total_attempts": 2,
+      "success_count": 2,
+      "success_rate": 100,
+      "avg_process_time": 54951838150,
+      "min_process_time": 54951566300,
+      "max_process_time": 54952110000
+    },
+    "videos/ai_10min.mp4": {
+      "video_file": "videos/ai_10min.mp4",
+      "total_attempts": 2,
+      "success_count": 2,
+      "success_rate": 100,
+      "avg_process_time": 180991574600,
+      "min_process_time": 180991480900,
+      "max_process_time": 180991668300
+    },
+    "videos/ai_20min.mp4": {
+      "video_file": "videos/ai_20min.mp4",
+      "total_attempts": 2,
+      "success_count": 2,
+      "success_rate": 100,
+      "avg_process_time": 360991415150,
+      "min_process_time": 360991307200,
+      "max_process_time": 360991523100
+    }
+  },
+  "group_comparison": [
+    {
+      "video_file": "videos/3min.mp4",
+      "group1_avg_time": 54951566300,
+      "group2_avg_time": 54952110000,
+      "performance_diff": -0.0009894167475259026,
+      "consistency_score": 100
+    },
+    {
+      "video_file": "videos/ai_10min.mp4",
+      "group1_avg_time": 180991480900,
+      "group2_avg_time": 180991668300,
+      "performance_diff": -0.00010354078494088944,
+      "consistency_score": 100
+    },
+    {
+      "video_file": "videos/ai_20min.mp4",
+      "group1_avg_time": 360991523100,
+      "group2_avg_time": 360991307200,
+      "performance_diff": 0.000059807498565608284,
+      "consistency_score": 100
+    }
+  ]
+}

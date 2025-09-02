@@ -1,156 +1,157 @@
-# AI视频理解模块
+# Docs 模块
 
-为教育平台实现的"AI看视频"功能，支持视频自动转录、摘要生成和智能问答。
+## 概述
 
-## 🚀 功能特性
+`docs` 模块包含了 videoSummarize 项目的完整文档集合，提供系统架构、实现指南、技术优化报告和使用说明等重要文档。
 
-- **视频预处理**: 自动提取音频和关键帧
-- **语音识别**: 支持本地Whisper模型，GPU加速
-- **智能摘要**: 基于LLM的内容摘要生成
-- **向量存储**: 支持pgvector数据库
-- **RAG检索**: 增强的问答系统
-- **视频隔离**: 多视频数据安全隔离
+## 文件说明
 
-## 📋 系统要求
+### README.md
 
-- Go 1.19+
-- Python 3.8+
-- FFmpeg
-- PostgreSQL (可选，用于向量存储)
-- NVIDIA GPU (可选，用于加速)
+**功能**：项目主文档和快速入门指南
 
-## 🛠️ 安装配置
+**内容包括**：
+- 项目概述和功能特性
+- 系统要求和环境配置
+- 安装和部署指南
+- API接口使用说明
+- 快速开始示例
+- 常见问题解答
 
-### 1. 克隆项目
-```bash
-git clone <repository-url>
-cd videoSummarize
-```
+### implementation_guide.md
 
-### 2. 安装依赖
-```bash
-# Go依赖
-go mod tidy
+**功能**：详细的实现指南和开发文档
 
-# Python依赖
-pip install openai-whisper torch
-```
+**内容包括**：
+- 系统架构设计
+- 模块间交互流程
+- 核心算法实现
+- 数据流处理逻辑
+- 扩展开发指南
+- 最佳实践建议
 
-### 3. 配置文件
-复制配置模板并填写相关信息：
-```bash
-cp config.json.example config.json
-```
+### GPU_ACCELERATION.md
 
-编辑 `config.json`：
-```json
-{
-  "api_key": "your-volcengine-api-key-here",
-  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-  "embedding_model": "doubao-embedding-text-240715",
-  "chat_model": "kimi-k2-250711",
-  "postgres_url": "postgres://postgres:password@localhost:5432/vectordb?sslmode=disable",
-  "gpu_acceleration": true,
-  "gpu_type": "auto"
-}
-```
+**功能**：GPU加速配置和优化指南
 
-### 4. 数据库设置（可选）
-如果使用PostgreSQL向量存储：
-```sql
-CREATE DATABASE vectordb;
-\c vectordb;
-CREATE EXTENSION vector;
-```
+**内容包括**：
+- GPU硬件要求
+- CUDA环境配置
+- GPU加速模块说明
+- 性能优化策略
+- 故障排查指南
+- 性能基准测试
 
-## 🎯 使用方法
+### technical_optimization_report.md
 
-### 启动服务
-```bash
-go run .
-```
+**功能**：技术优化报告和性能分析
 
-### 处理视频
-```bash
-curl -X POST http://localhost:8080/process-video \
-  -H "Content-Type: application/json" \
-  -d '{"video_path": "path/to/your/video.mp4"}'
-```
+**内容包括**：
+- 系统性能分析
+- 优化策略实施
+- 性能提升效果
+- 资源使用优化
+- 并发处理改进
+- 未来优化方向
 
-### 智能问答
-```bash
-curl -X POST http://localhost:8080/query \
-  -H "Content-Type: application/json" \
-  -d '{
-    "job_id": "your-job-id",
-    "question": "视频中讲了什么内容？",
-    "top_k": 3
-  }'
-```
+### file_generation_analysis.md
 
-### 性能测试
-```bash
-go run . benchmark
-```
+**功能**：文件生成和处理分析报告
 
-### 集成测试
-```bash
-go run . test
-```
+**内容包括**：
+- 文件生成流程分析
+- 存储策略优化
+- 临时文件管理
+- 磁盘空间优化
+- 文件清理机制
+- 性能影响评估
 
-## 🔧 环境变量
+### final_fix_summary.md
 
-可以通过环境变量覆盖配置文件设置：
+**功能**：最终修复总结和版本更新说明
 
-- `API_KEY`: API密钥
-- `BASE_URL`: API基础URL
-- `ASR`: ASR提供商 (mock/api-whisper/volcengine)
-- `GPU_ACCELERATION`: 启用GPU加速 (true/false)
-- `GPU_TYPE`: GPU类型 (nvidia/amd/intel/auto)
-- `POSTGRES_URL`: PostgreSQL连接URL
+**内容包括**：
+- 关键问题修复记录
+- 功能改进总结
+- 性能优化成果
+- 稳定性提升措施
+- 版本兼容性说明
+- 升级指导建议
 
-## 📁 项目结构
+## 文档使用指南
 
-```
-├── main.go              # 主程序入口
-├── config.go            # 配置管理
-├── asr.go              # 语音识别模块
-├── preprocess.go       # 视频预处理
-├── pipeline.go         # 处理流水线
-├── store.go            # 向量存储
-├── summarize.go        # 摘要生成
-├── models.go           # 数据模型
-├── util.go             # 工具函数
-├── test_integration.go # 集成测试
-├── config.json.example # 配置模板
-└── README.md           # 说明文档
-```
+### 新用户入门
 
-## 🚨 安全注意事项
+1. **首先阅读**：`README.md` - 了解项目概况和快速开始
+2. **环境配置**：`GPU_ACCELERATION.md` - 配置GPU加速环境
+3. **深入理解**：`implementation_guide.md` - 学习系统架构和实现细节
 
-- `config.json` 包含敏感信息，已添加到 `.gitignore`
-- 请勿将API密钥提交到版本控制系统
-- 生产环境建议使用环境变量管理敏感配置
+### 开发者参考
 
-## 🐛 故障排除
+1. **架构设计**：`implementation_guide.md` - 系统设计和模块交互
+2. **性能优化**：`technical_optimization_report.md` - 优化策略和最佳实践
+3. **问题排查**：`final_fix_summary.md` - 常见问题和解决方案
 
-### 编码问题
-如果遇到中文乱码，确保：
-- 系统支持UTF-8编码
-- Python环境正确配置
-- 终端支持UTF-8显示
+### 运维人员指南
 
-### GPU加速问题
-如果GPU加速失败：
-- 检查NVIDIA驱动和CUDA安装
-- 确认PyTorch GPU版本
-- 可设置 `gpu_acceleration: false` 使用CPU
+1. **部署配置**：`README.md` - 系统部署和配置
+2. **性能监控**：`technical_optimization_report.md` - 性能指标和监控
+3. **故障处理**：`GPU_ACCELERATION.md` - GPU相关问题排查
 
-### 数据库连接问题
-- 确认PostgreSQL服务运行
-- 检查连接字符串格式
-- 确认数据库权限设置
+## 文档维护
 
-## 📄 许可证
+### 更新原则
 
-MIT License
+- **及时性**：功能更新后及时更新相关文档
+- **准确性**：确保文档内容与实际实现一致
+- **完整性**：覆盖所有重要功能和配置选项
+- **易读性**：使用清晰的结构和示例说明
+
+### 版本管理
+
+- 文档版本与代码版本保持同步
+- 重大更新时创建版本标记
+- 保留历史版本以供参考
+- 维护更新日志记录
+
+### 贡献指南
+
+1. **文档格式**：使用Markdown格式编写
+2. **结构规范**：遵循现有文档结构和风格
+3. **内容审核**：提交前进行内容准确性检查
+4. **示例代码**：提供可运行的代码示例
+
+## 相关资源
+
+### 外部文档
+
+- [Go官方文档](https://golang.org/doc/)
+- [FFmpeg文档](https://ffmpeg.org/documentation.html)
+- [Whisper模型文档](https://github.com/openai/whisper)
+- [PostgreSQL文档](https://www.postgresql.org/docs/)
+
+### 技术博客
+
+- 视频处理技术分享
+- AI模型优化经验
+- 系统架构设计思路
+- 性能调优实践案例
+
+### 社区支持
+
+- GitHub Issues：问题报告和功能请求
+- 技术讨论：架构设计和实现交流
+- 用户反馈：使用体验和改进建议
+
+## 快速导航
+
+| 文档 | 用途 | 目标用户 |
+|------|------|----------|
+| README.md | 项目介绍和快速开始 | 所有用户 |
+| implementation_guide.md | 实现指南和架构说明 | 开发者 |
+| GPU_ACCELERATION.md | GPU配置和优化 | 运维人员 |
+| technical_optimization_report.md | 性能优化报告 | 技术负责人 |
+| file_generation_analysis.md | 文件处理分析 | 系统管理员 |
+| final_fix_summary.md | 修复总结和更新说明 | 维护人员 |
+
+通过完整的文档体系，确保 videoSummarize 项目的可维护性、可扩展性和用户友好性。

@@ -38,6 +38,7 @@ config.json
 
 # ==== Video and Media Files ====
 # Video files (test materials)
+videos/
 *.mp4
 *.avi
 *.mov
