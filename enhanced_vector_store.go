@@ -158,6 +158,26 @@ func NewEnhancedVectorStoreWithConfig(config BatchConfig) (*EnhancedVectorStore,
 func (s *EnhancedVectorStore) initializeEnhancedFeatures() error {
 	ctx := context.Background()
 
+	// 确保基础表存在
+	if err := s.ensureBaseTables(); err != nil {
+		log.Printf("Warning: failed to ensure base tables: %v", err)
+		return nil // 如果表创建失败，跳过索引创建
+	}
+
+	// 检查video_segments表是否存在video_id列
+	var columnExists bool
+	columnCheckQuery := `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'video_segments' 
+			AND column_name = 'video_id'
+		);
+	`
+	if err := s.conn.QueryRow(ctx, columnCheckQuery).Scan(&columnExists); err != nil || !columnExists {
+		log.Printf("Warning: video_segments table or video_id column not found, skipping index creation")
+		return nil
+	}
+
 	// 创建全文搜索索引
 	fullTextIndexQuery := `
 		CREATE INDEX IF NOT EXISTS idx_video_segments_fulltext 
@@ -185,6 +205,48 @@ func (s *EnhancedVectorStore) initializeEnhancedFeatures() error {
 	// 检查现有索引状态
 	if err := s.loadIndexStatus(); err != nil {
 		log.Printf("Warning: failed to load index status: %v", err)
+	}
+
+	return nil
+}
+
+// ensureBaseTables 确保基础表存在
+func (s *EnhancedVectorStore) ensureBaseTables() error {
+	ctx := context.Background()
+
+	// 创建videos表
+	videosQuery := `
+		CREATE TABLE IF NOT EXISTS videos (
+			id SERIAL PRIMARY KEY,
+			video_id VARCHAR(255) UNIQUE NOT NULL,
+			video_name VARCHAR(500),
+			video_path VARCHAR(1000),
+			duration FLOAT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+	`
+	if _, err := s.conn.Exec(ctx, videosQuery); err != nil {
+		return fmt.Errorf("failed to create videos table: %w", err)
+	}
+
+	// 创建video_segments表
+	segmentsQuery := `
+		CREATE TABLE IF NOT EXISTS video_segments (
+			id SERIAL PRIMARY KEY,
+			video_id VARCHAR(255) NOT NULL,
+			job_id VARCHAR(255) NOT NULL,
+			segment_id VARCHAR(255) NOT NULL,
+			start_time FLOAT NOT NULL,
+			end_time FLOAT NOT NULL,
+			text TEXT NOT NULL,
+			summary TEXT,
+			embedding vector(1536),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(video_id, job_id, segment_id)
+		);
+	`
+	if _, err := s.conn.Exec(ctx, segmentsQuery); err != nil {
+		return fmt.Errorf("failed to create video_segments table: %w", err)
 	}
 
 	return nil

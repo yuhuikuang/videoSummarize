@@ -301,11 +301,35 @@ func transcribeAudio(audioPath, jobID string) ([]Segment, error) {
 		return nil, fmt.Errorf("transcribe audio: %v", err)
 	}
 
-	// persist transcript
+	// persist original transcript
 	jobDir := filepath.Join(dataRoot(), jobID)
 	_ = os.WriteFile(filepath.Join(jobDir, "transcript.json"), mustJSON(segs), 0644)
 
-	return segs, nil
+	// 添加文本修正阶段
+	correctedSegs, correctionSession, err := correctTranscriptSegments(segs, jobID)
+	if err != nil {
+		log.Printf("Text correction failed for job %s: %v", jobID, err)
+		// 如果修正失败，使用原始转录结果
+		correctedSegs = segs
+	} else {
+		// 保存修正会话记录
+		if err := saveCorrectionSession(jobDir, correctionSession); err != nil {
+			log.Printf("Failed to save correction session for job %s: %v", jobID, err)
+		}
+		
+		// 保存修正后的转录文件
+		if err := saveCorrectedTranscript(jobDir, correctedSegs); err != nil {
+			log.Printf("Failed to save corrected transcript for job %s: %v", jobID, err)
+			// 如果保存失败，使用原始转录结果
+			correctedSegs = segs
+		} else {
+			// 生成并记录修正报告
+			report := generateCorrectionReport(correctionSession)
+			log.Printf("Text correction report for job %s:\n%s", jobID, report)
+		}
+	}
+
+	return correctedSegs, nil
 }
 
 // Enhanced ASR functions with retry and error handling
@@ -360,11 +384,40 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]Segment, error) {
 			log.Printf("ASR transcription successful for job %s in %v, found %d segments", 
 				jobID, duration, len(segs))
 			
-			// 保存转录结果
+			// 保存原始转录结果
 			jobDir := filepath.Join(dataRoot(), jobID)
 			transcriptPath := filepath.Join(jobDir, "transcript.json")
 			if err := os.WriteFile(transcriptPath, mustJSON(segs), 0644); err != nil {
 				log.Printf("Warning: Failed to save transcript for job %s: %v", jobID, err)
+			}
+			
+			// 添加文本修正阶段
+			checkpoint.CurrentStep = "text_correction"
+			saveCheckpoint(filepath.Join(dataRoot(), jobID), checkpoint)
+			
+			correctedSegs, correctionSession, corrErr := correctTranscriptSegments(segs, jobID)
+			if corrErr != nil {
+				log.Printf("Text correction failed for job %s: %v", jobID, corrErr)
+				// 如果修正失败，使用原始转录结果
+				correctedSegs = segs
+				checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("Text correction failed: %v", corrErr))
+			} else {
+				// 保存修正会话记录
+				if err := saveCorrectionSession(jobDir, correctionSession); err != nil {
+					log.Printf("Failed to save correction session for job %s: %v", jobID, err)
+				}
+				
+				// 保存修正后的转录文件
+				if err := saveCorrectedTranscript(jobDir, correctedSegs); err != nil {
+					log.Printf("Failed to save corrected transcript for job %s: %v", jobID, err)
+					// 如果保存失败，使用原始转录结果
+					correctedSegs = segs
+				} else {
+					// 生成并记录修正报告
+					report := generateCorrectionReport(correctionSession)
+					log.Printf("Text correction report for job %s:\n%s", jobID, report)
+					checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "text_correction")
+				}
 			}
 			
 			// 更新检查点
@@ -372,7 +425,7 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]Segment, error) {
 			checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "asr_transcription")
 			saveCheckpoint(filepath.Join(dataRoot(), jobID), checkpoint)
 			
-			return segs, nil
+			return correctedSegs, nil
 		}
 		
 		// 失败处理

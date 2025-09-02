@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -156,6 +157,25 @@ func summarizeHandler(w http.ResponseWriter, r *http.Request) {
 // generateSummary generates summaries for segments with frames
 func generateSummary(segments []Segment, jobID string) ([]Item, error) {
 	jobDir := filepath.Join(dataRoot(), jobID)
+	
+	// 优先使用修正后的转录文件
+	correctedTranscriptPath := filepath.Join(jobDir, "transcript_corrected.json")
+	if _, err := os.Stat(correctedTranscriptPath); err == nil {
+		// 读取修正后的转录文件
+		if correctedData, err := os.ReadFile(correctedTranscriptPath); err == nil {
+			var correctedSegments []Segment
+			if err := json.Unmarshal(correctedData, &correctedSegments); err == nil {
+				segments = correctedSegments
+				log.Printf("Using corrected transcript for summary generation in job %s", jobID)
+			} else {
+				log.Printf("Failed to parse corrected transcript for job %s: %v", jobID, err)
+			}
+		} else {
+			log.Printf("Failed to read corrected transcript for job %s: %v", jobID, err)
+		}
+	} else {
+		log.Printf("No corrected transcript found for job %s, using original segments", jobID)
+	}
 	
 	// Load frames if available
 	frames := []Frame{}

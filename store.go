@@ -417,34 +417,62 @@ func (s *PgVectorStore) ensureTable() error {
 		return fmt.Errorf("failed to create video_segments table: %w", err)
 	}
 
-	// Add foreign key constraint if not exists
-	fkQuery := `
-		DO $$ 
-		BEGIN
-			IF NOT EXISTS (
-				SELECT 1 FROM information_schema.table_constraints 
-				WHERE constraint_name = 'video_segments_video_id_fkey'
-			) THEN
-				ALTER TABLE video_segments 
-				ADD CONSTRAINT video_segments_video_id_fkey 
-				FOREIGN KEY (video_id) REFERENCES videos(video_id) ON DELETE CASCADE;
-			END IF;
-		END $$;
+	// 先确保videos表存在
+	videosTableQuery := `
+		CREATE TABLE IF NOT EXISTS videos (
+			id SERIAL PRIMARY KEY,
+			video_id VARCHAR(255) UNIQUE NOT NULL,
+			video_name VARCHAR(500),
+			video_path VARCHAR(1000),
+			duration FLOAT,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
 	`
-	if _, err := s.conn.Exec(ctx, fkQuery); err != nil {
-		fmt.Printf("Warning: failed to add foreign key constraint: %v\n", err)
+	if _, err := s.conn.Exec(ctx, videosTableQuery); err != nil {
+		fmt.Printf("Warning: failed to create videos table: %v\n", err)
 	}
 
-	// Create indexes
-	indexes := []string{
-		"CREATE INDEX IF NOT EXISTS idx_video_segments_video_id ON video_segments(video_id);",
-		"CREATE INDEX IF NOT EXISTS idx_video_segments_job_id ON video_segments(job_id);",
-		"CREATE INDEX IF NOT EXISTS idx_video_segments_video_job ON video_segments(video_id, job_id);",
-	}
+	// Add foreign key constraint if not exists (暂时跳过外键约束)
+	// fkQuery := `
+	// 	DO $$ 
+	// 	BEGIN
+	// 		IF NOT EXISTS (
+	// 			SELECT 1 FROM information_schema.table_constraints 
+	// 			WHERE constraint_name = 'video_segments_video_id_fkey'
+	// 		) THEN
+	// 			ALTER TABLE video_segments 
+	// 			ADD CONSTRAINT video_segments_video_id_fkey 
+	// 			FOREIGN KEY (video_id) REFERENCES videos(video_id) ON DELETE CASCADE;
+	// 		END IF;
+	// 	END $$;
+	// `
+	// if _, err := s.conn.Exec(ctx, fkQuery); err != nil {
+	// 	fmt.Printf("Warning: failed to add foreign key constraint: %v\n", err)
+	// }
 
-	for _, indexQuery := range indexes {
-		if _, err := s.conn.Exec(ctx, indexQuery); err != nil {
-			return fmt.Errorf("failed to create index: %w", err)
+	// 检查video_segments表是否存在video_id列
+	var columnExists bool
+	columnCheckQuery := `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns 
+			WHERE table_name = 'video_segments' 
+			AND column_name = 'video_id'
+		);
+	`
+	if err := s.conn.QueryRow(ctx, columnCheckQuery).Scan(&columnExists); err != nil || !columnExists {
+		fmt.Printf("Warning: video_segments table or video_id column not found, skipping index creation\n")
+	} else {
+		// Create indexes only if table and column exist
+		indexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_video_segments_video_id ON video_segments(video_id);",
+			"CREATE INDEX IF NOT EXISTS idx_video_segments_job_id ON video_segments(job_id);",
+			"CREATE INDEX IF NOT EXISTS idx_video_segments_video_job ON video_segments(video_id, job_id);",
+		}
+
+		for _, indexQuery := range indexes {
+			if _, err := s.conn.Exec(ctx, indexQuery); err != nil {
+				fmt.Printf("Warning: failed to create index: %v\n", err)
+			}
 		}
 	}
 

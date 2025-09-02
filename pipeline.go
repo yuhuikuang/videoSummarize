@@ -94,7 +94,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save transcript
+	// Save original transcript
 	transcriptPath := filepath.Join(dataRoot(), response.JobID, "transcript.json")
 	if err := saveJSON(transcriptPath, segments); err != nil {
 		response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "failed", Error: fmt.Sprintf("Failed to save transcript: %v", err)})
@@ -104,6 +104,41 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "completed"})
 	fmt.Println("Audio transcription completed")
+
+	// Step 2.5: Text correction
+	fmt.Println("Starting text correction...")
+	jobDir := filepath.Join(dataRoot(), response.JobID)
+	correctedSegments, correctionSession, corrErr := correctTranscriptSegments(segments, response.JobID)
+	if corrErr != nil {
+		fmt.Printf("Text correction failed for job %s: %v\n", response.JobID, corrErr)
+		// 如果修正失败，使用原始转录结果
+		correctedSegments = segments
+		response.Warnings = append(response.Warnings, fmt.Sprintf("Text correction failed: %v", corrErr))
+		response.Steps = append(response.Steps, Step{Name: "text_correction", Status: "failed", Error: corrErr.Error()})
+	} else {
+		// 保存修正会话记录
+		if err := saveCorrectionSession(jobDir, correctionSession); err != nil {
+			fmt.Printf("Failed to save correction session for job %s: %v\n", response.JobID, err)
+			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to save correction session: %v", err))
+		}
+		
+		// 保存修正后的转录文件
+		if err := saveCorrectedTranscript(jobDir, correctedSegments); err != nil {
+			fmt.Printf("Failed to save corrected transcript for job %s: %v\n", response.JobID, err)
+			// 如果保存失败，使用原始转录结果
+			correctedSegments = segments
+			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to save corrected transcript: %v", err))
+		} else {
+			// 生成并记录修正报告
+			report := generateCorrectionReport(correctionSession)
+			fmt.Printf("Text correction report for job %s:\n%s\n", response.JobID, report)
+		}
+		response.Steps = append(response.Steps, Step{Name: "text_correction", Status: "completed"})
+	}
+	fmt.Println("Text correction completed")
+
+	// 使用修正后的segments进行后续处理
+	segments = correctedSegments
 
 	// Step 3: Generate summaries
 	fmt.Println("Starting summary generation...")

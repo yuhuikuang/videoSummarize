@@ -86,6 +86,7 @@ func main() {
 	http.HandleFunc("/process-video", processVideoHandler)
 	http.HandleFunc("/preprocess", preprocessHandler)
 	http.HandleFunc("/transcribe", transcribeHandler)
+	http.HandleFunc("/correct-text", correctTextHandler)
 	http.HandleFunc("/summarize", summarizeHandler)
 	http.HandleFunc("/store", storeHandler)
 	http.HandleFunc("/query", queryHandler)
