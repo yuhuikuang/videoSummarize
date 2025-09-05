@@ -334,34 +334,109 @@ func (ga *GPUAccelerator) AccelerateLLM(prompt, model string, params map[string]
 	if !ga.IsEnabled() {
 		return "", fmt.Errorf("GPU不可用，使用CPU处理")
 	}
-	
+
 	device := ga.GetBestDevice()
 	if device == nil {
 		return "", fmt.Errorf("没有可用的GPU设备")
 	}
-	
+
 	log.Printf("使用GPU %d (%s) 加速LLM推理", device.ID, device.Name)
-	
-	// 这里应该集成实际的GPU加速LLM推理
-	// 例如使用vLLM、TensorRT-LLM或其他GPU推理框架
-	
+
 	startTime := time.Now()
 	
-	// 模拟GPU加速的LLM推理
-	// 实际实现中应该调用GPU推理引擎
-	result := fmt.Sprintf("GPU加速处理结果: %s (模型: %s, 设备: %s)", prompt[:min(50, len(prompt))], model, device.Name)
+	// 检查模型参数
+	maxTokens := 1000
+	temperature := 0.7
+	if params != nil {
+		if mt, ok := params["max_tokens"].(int); ok {
+			maxTokens = mt
+		}
+		if temp, ok := params["temperature"].(float64); ok {
+			temperature = temp
+		}
+	}
 	
-	// 模拟处理时间（GPU加速应该更快）
-	processingTime := time.Duration(len(prompt)/10) * time.Millisecond
+	// 预处理提示词
+	processedPrompt := strings.TrimSpace(prompt)
+	if len(processedPrompt) == 0 {
+		return "", fmt.Errorf("empty prompt provided")
+	}
+	
+	// 模拟GPU加速的LLM推理过程
+	// 在实际实现中，这里应该调用GPU推理引擎如vLLM、TensorRT-LLM等
+	
+	// 1. 模拟tokenization
+	tokenCount := len(strings.Fields(processedPrompt))
+	log.Printf("Tokenizing prompt: %d tokens estimated", tokenCount)
+	
+	// 2. 模拟GPU推理
+	log.Printf("Running inference on GPU %d with model %s", device.ID, model)
+	
+	// 根据提示词长度和模型复杂度计算处理时间
+	baseTime := time.Duration(tokenCount) * time.Millisecond
+	gpuSpeedup := 0.3 // GPU加速比CPU快70%
+	processingTime := time.Duration(float64(baseTime) * gpuSpeedup)
+	
+	// 模拟实际处理时间
 	time.Sleep(processingTime)
+	
+	// 3. 生成响应
+	response := ga.generateLLMResponse(processedPrompt, model, maxTokens, temperature)
 	
 	duration := time.Since(startTime)
 	
-	// 更新指标
+	// 更新GPU使用指标
 	ga.updateMetrics("llm", true, duration)
 	
-	log.Printf("GPU加速LLM推理完成，耗时: %v", duration)
-	return result, nil
+	// 更新设备状态
+	device.LastUpdated = time.Now()
+	if device.Utilization+10.0 > 100.0 {
+		device.Utilization = 100.0
+	} else {
+		device.Utilization = device.Utilization + 10.0
+	} // 模拟使用率增加
+	
+	log.Printf("GPU加速LLM推理完成，耗时: %v, 生成tokens: %d", duration, len(strings.Fields(response)))
+	return response, nil
+}
+
+// generateLLMResponse 生成LLM响应
+func (ga *GPUAccelerator) generateLLMResponse(prompt, model string, maxTokens int, temperature float64) string {
+	// 这是一个简化的响应生成器
+	// 在实际实现中，这里应该调用真正的LLM推理引擎
+	
+	responseTemplates := []string{
+		"基于您的问题，我认为关键点在于理解视频内容的核心主题。",
+		"根据视频分析，主要内容涵盖了以下几个方面：技术实现、应用场景和未来发展。",
+		"通过深度学习技术，我们可以从视频中提取出有价值的信息和洞察。",
+		"视频内容的智能分析需要结合多模态信息，包括音频、视觉和文本特征。",
+	}
+	
+	// 根据提示词选择合适的响应模板
+	promptLower := strings.ToLower(prompt)
+	var response string
+	
+	if strings.Contains(promptLower, "摘要") || strings.Contains(promptLower, "总结") {
+		response = "视频摘要：" + responseTemplates[1]
+	} else if strings.Contains(promptLower, "技术") || strings.Contains(promptLower, "实现") {
+		response = "技术分析：" + responseTemplates[0]
+	} else if strings.Contains(promptLower, "分析") {
+		response = "深度分析：" + responseTemplates[2]
+	} else {
+		response = responseTemplates[3]
+	}
+	
+	// 根据maxTokens限制响应长度
+	words := strings.Fields(response)
+	if len(words) > maxTokens/4 { // 假设平均每个token约为0.25个单词
+		words = words[:maxTokens/4]
+		response = strings.Join(words, " ") + "..."
+	}
+	
+	// 添加模型和温度信息（用于调试）
+	response += fmt.Sprintf(" [模型: %s, 温度: %.1f]", model, temperature)
+	
+	return response
 }
 
 // GetDeviceInfo 获取设备信息

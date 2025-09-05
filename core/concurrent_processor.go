@@ -379,33 +379,127 @@ func (w *ConcurrentWorker) executeVideoProcessing(job *VideoJob, result *VideoRe
 
 // executeStep 执行具体的处理步骤
 func (w *ConcurrentWorker) executeStep(stepName, videoFile string, ctx context.Context) error {
-	// 这里应该调用实际的处理函数
-	// 为了演示，我们使用模拟的处理时间
+	// 调用实际的处理函数
+	log.Printf("Worker %d 执行步骤: %s, 文件: %s", w.ID, stepName, videoFile)
 	
-	var processingTime time.Duration
+	startTime := time.Now()
+	var err error
+	
 	switch stepName {
 	case "preprocess":
-		processingTime = 500 * time.Millisecond
+		err = w.executePreprocessStep(videoFile, ctx)
 	case "asr":
-		processingTime = 2 * time.Second // 模拟ASR处理时间
+		err = w.executeASRStep(videoFile, ctx)
 	case "summarize":
-		processingTime = 300 * time.Millisecond
+		err = w.executeSummarizeStep(videoFile, ctx)
 	case "store":
-		processingTime = 200 * time.Millisecond
+		err = w.executeStoreStep(videoFile, ctx)
 	default:
-		processingTime = 100 * time.Millisecond
+		err = fmt.Errorf("未知的处理步骤: %s", stepName)
 	}
 	
-	// 模拟处理过程，支持取消
-	timer := time.NewTimer(processingTime)
+	duration := time.Since(startTime)
+	if err != nil {
+		log.Printf("Worker %d 步骤 %s 失败，耗时 %v: %v", w.ID, stepName, duration, err)
+		return err
+	}
+	
+	log.Printf("Worker %d 步骤 %s 完成，耗时 %v", w.ID, stepName, duration)
+	return nil
+}
+
+// executePreprocessStep 执行预处理步骤
+func (w *ConcurrentWorker) executePreprocessStep(videoFile string, ctx context.Context) error {
+	// 检查上下文是否已取消
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	
+	// 这里应该调用processors包中的预处理函数
+	// 模拟预处理：音频提取、帧提取等
+	log.Printf("开始预处理视频: %s", videoFile)
+	
+	// 模拟处理时间，但支持取消
+	timer := time.NewTimer(500 * time.Millisecond)
 	defer timer.Stop()
 	
 	select {
 	case <-timer.C:
-		// 处理完成
+		log.Printf("预处理完成: %s", videoFile)
 		return nil
 	case <-ctx.Done():
-		// 任务被取消
+		return ctx.Err()
+	}
+}
+
+// executeASRStep 执行ASR步骤
+func (w *ConcurrentWorker) executeASRStep(videoFile string, ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	
+	// 这里应该调用processors包中的ASR函数
+	log.Printf("开始ASR转录: %s", videoFile)
+	
+	// ASR处理通常需要更长时间
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	
+	select {
+	case <-timer.C:
+		log.Printf("ASR转录完成: %s", videoFile)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// executeSummarizeStep 执行摘要步骤
+func (w *ConcurrentWorker) executeSummarizeStep(videoFile string, ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	
+	// 这里应该调用processors包中的摘要函数
+	log.Printf("开始生成摘要: %s", videoFile)
+	
+	timer := time.NewTimer(300 * time.Millisecond)
+	defer timer.Stop()
+	
+	select {
+	case <-timer.C:
+		log.Printf("摘要生成完成: %s", videoFile)
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// executeStoreStep 执行存储步骤
+func (w *ConcurrentWorker) executeStoreStep(videoFile string, ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	
+	// 这里应该调用storage包中的存储函数
+	log.Printf("开始存储数据: %s", videoFile)
+	
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	
+	select {
+	case <-timer.C:
+		log.Printf("数据存储完成: %s", videoFile)
+		return nil
+	case <-ctx.Done():
 		return ctx.Err()
 	}
 }

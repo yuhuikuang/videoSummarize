@@ -843,6 +843,28 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func embedText(text string) map[string]float64 {
+	// 尝试使用OpenAI嵌入API
+	cfg, err := config.LoadConfig()
+	if err == nil && cfg.OpenAI.APIKey != "" {
+		client := openai.NewClient(cfg.OpenAI.APIKey)
+		ctx := context.Background()
+		req := openai.EmbeddingRequest{
+			Model: openai.AdaEmbeddingV2,
+			Input: []string{text},
+		}
+		resp, err := client.CreateEmbeddings(ctx, req)
+		if err == nil && len(resp.Data) > 0 {
+			// 将float32向量转换为map[string]float64格式以保持兼容性
+			embedding := resp.Data[0].Embedding
+			m := make(map[string]float64)
+			for i, val := range embedding {
+				m[fmt.Sprintf("dim_%d", i)] = float64(val)
+			}
+			return m
+		}
+	}
+	
+	// 回退到简单的词频向量化
 	toks := tokenize(text)
 	m := map[string]float64{}
 	for _, t := range toks { m[t] += 1 }

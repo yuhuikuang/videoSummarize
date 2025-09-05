@@ -144,7 +144,11 @@ func pickSummaryProvider() Summarizer {
 		return MockSummarizer{}
 	}
 	
-	cli := &openai.Client{} // 简单实现()
+	clientConfig := openai.DefaultConfig(config.APIKey)
+	if config.BaseURL != "" {
+		clientConfig.BaseURL = config.BaseURL
+	}
+	cli := openai.NewClientWithConfig(clientConfig)
 	
 	return VolcengineSummarizer{cli: cli}
 }

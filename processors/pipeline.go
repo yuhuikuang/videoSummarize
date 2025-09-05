@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"videoSummarize/config"
 	"videoSummarize/core"
 	"videoSummarize/storage"
 )
@@ -36,8 +37,7 @@ type PgVectorStore = storage.Store
 
 // printConfigInstructions 打印配置说明
 func printConfigInstructions() {
-	// 简单实现
-	fmt.Println("Please configure your settings in config.json")
+	config.PrintConfigInstructions()
 }
 
 type ProcessVideoRequest struct {

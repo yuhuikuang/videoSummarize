@@ -585,17 +585,33 @@ func repairHandler(w http.ResponseWriter, r *http.Request) {
 
 // extractFramesAtInterval 从视频中提取帧
 func extractFramesAtInterval(videoPath, outputDir string, interval float64) ([]string, error) {
+	// 确保输出目录存在
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create output directory: %v", err)
+	}
+	
 	// 使用ffmpeg提取视频帧
 	cmd := exec.Command("ffmpeg", "-i", videoPath, "-vf", fmt.Sprintf("fps=1/%f", interval), 
 		filepath.Join(outputDir, "frame_%04d.jpg"))
 	err := cmd.Run()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ffmpeg extraction failed: %v", err)
 	}
 	
-	// 返回生成的帧文件列表（简化实现）
+	// 扫描输出目录获取生成的帧文件
 	var frames []string
-	// TODO: 实际扫描输出目录获取生成的帧文件
+	files, err := os.ReadDir(outputDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read output directory: %v", err)
+	}
+	
+	for _, file := range files {
+		if !file.IsDir() && strings.HasPrefix(file.Name(), "frame_") && strings.HasSuffix(file.Name(), ".jpg") {
+			frames = append(frames, filepath.Join(outputDir, file.Name()))
+		}
+	}
+	
+	log.Printf("Extracted %d frames from %s to %s", len(frames), videoPath, outputDir)
 	return frames, nil
 }
 

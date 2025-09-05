@@ -18,7 +18,17 @@ import (
 
 // openaiClient 创建OpenAI客户端
 func openaiClient() *openai.Client {
-	return &openai.Client{} // 简单实现
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		// Fallback to environment variable
+		return openai.NewClient(os.Getenv("API_KEY"))
+	}
+
+	clientConfig := openai.DefaultConfig(cfg.APIKey)
+	if cfg.BaseURL != "" {
+		clientConfig.BaseURL = cfg.BaseURL
+	}
+	return openai.NewClientWithConfig(clientConfig)
 }
 
 // Segment 类型别名

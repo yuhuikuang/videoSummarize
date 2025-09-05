@@ -88,9 +88,12 @@ type HybridSearchResult struct {
 
 // NewEnhancedVectorStore 创建增强向量存储
 func NewEnhancedVectorStore() (*EnhancedVectorStore, error) {
+	// 尝试创建PgVector存储，如果失败则使用内存存储
 	store, err := newPgVectorStore()
 	if err != nil {
-		return nil, err
+		// 如果PostgreSQL连接失败，创建一个基于内存存储的增强版本
+		log.Printf("PostgreSQL连接失败，使用内存存储: %v", err)
+		return NewEnhancedVectorStoreWithMemory()
 	}
 
 	// 默认批量配置
@@ -115,6 +118,36 @@ func NewEnhancedVectorStore() (*EnhancedVectorStore, error) {
 	// 初始化增强功能
 	if err := enhanced.initializeEnhancedFeatures(); err != nil {
 		return nil, err
+	}
+
+	// 启动批量处理协程
+	go enhanced.startBatchProcessor()
+
+	// 启动索引监控协程
+	go enhanced.startIndexMonitor()
+
+	return enhanced, nil
+}
+
+// NewEnhancedVectorStoreWithMemory 创建基于内存存储的增强向量存储
+func NewEnhancedVectorStoreWithMemory() (*EnhancedVectorStore, error) {
+	// 默认批量配置
+	defaultConfig := BatchConfig{
+		MaxBatchSize:  100,
+		FlushTimeout:  30 * time.Second,
+		MaxRetries:    3,
+		RetryDelay:    1 * time.Second,
+		EnableMetrics: true,
+	}
+
+	enhanced := &EnhancedVectorStore{
+		conn:         nil, // 内存存储不需要数据库连接
+		oa:           openaiClient(),
+		videoID:      "",
+		indexStatus:  make(map[string]IndexStatus),
+		batchBuffer:  make([]BatchItem, 0),
+		batchConfig:  defaultConfig,
+		batchMetrics: &BatchMetrics{},
 	}
 
 	// 启动批量处理协程

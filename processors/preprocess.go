@@ -17,6 +17,7 @@ import (
 
 	"videoSummarize/config"
 	"videoSummarize/core"
+	"videoSummarize/utils"
 )
 
 // loadConfig 加载配置
@@ -26,8 +27,7 @@ func loadConfig() (*config.Config, error) {
 
 // detectGPUType 检测GPU类型
 func detectGPUType() string {
-	// 简单实现，实际应该检测硬件
-	return "cpu"
+	return utils.DetectGPUType()
 }
 
 // getHardwareAccelArgs 获取硬件加速参数
