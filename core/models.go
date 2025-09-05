@@ -152,7 +152,9 @@ type StepResult struct {
 
 type JobTask struct {
 	ID          string
+	JobID       string
 	Type        string
+	Status      string
 	Priority    int // 1-10, 10为最高优先级
 	Payload     interface{}
 	Timeout     time.Duration
@@ -164,18 +166,30 @@ type JobTask struct {
 }
 
 type JobResult struct {
+	ID          string
+	JobID       string
+	Type        string
 	TaskID      string
 	Success     bool
 	Result      interface{}
+	Output      interface{}
 	Error       error
 	Duration    time.Duration
 	WorkerID    string
+	StartTime   time.Time
+	EndTime     time.Time
 	CompletedAt time.Time
+	Status      string
 }
 
 type JobResource struct {
+	ID           string    `json:"id"`
 	JobID        string    `json:"job_id"`
+	Type         string    `json:"type"`
+	Status       string    `json:"status"`
 	StartTime    time.Time `json:"start_time"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastUpdate   time.Time `json:"last_update"`
 	CPUCores     int       `json:"cpu_cores"`
 	MemoryMB     int64     `json:"memory_mb"`
 	UseGPU       bool      `json:"use_gpu"`
@@ -203,15 +217,17 @@ type JobRequest struct {
 // ConcurrentWorker 已在 concurrent_processor.go 中定义
 
 type EnhancedWorker struct {
-	ID          string
-	Type        string // preprocess, transcribe, summarize
-	Status      string // idle, busy, error
-	CurrentJob  *JobTask
-	StartTime   time.Time
-	TotalJobs   int
-	ErrorCount  int
-	LastError   string
-	Capacity    ResourceCapacity
+	ID            string
+	Type          string // preprocess, transcribe, summarize
+	Status        string // idle, busy, error
+	CurrentJob    *JobTask
+	StartTime     time.Time
+	TotalJobs     int
+	ErrorCount    int
+	LastError     string
+	Capacity      ResourceCapacity
+	LastHeartbeat time.Time
+	CreatedAt     time.Time
 }
 
 // ========== 配置相关结构体 ==========

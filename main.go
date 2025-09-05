@@ -99,7 +99,7 @@ func main() {
 			fmt.Printf("详细报告: %+v\n", report)
 			return
 		case "test":
-			testSuite := benchmark.NewTestSuite(dataRoot, result.Config, result.ResourceManager.ResourceManager, result.ParallelProcessor, result.VectorStore)
+			testSuite := benchmark.NewTestSuite(dataRoot, result.Config, result.ResourceManager, result.ParallelProcessor, result.VectorStore)
 			integrationResults := testSuite.RunIntegrationTests()
 			performanceResults := testSuite.RunPerformanceTests()
 			allResults := append(integrationResults, performanceResults...)
@@ -107,7 +107,7 @@ func main() {
 			fmt.Printf("测试完成，成功率: %.2f%%\n", report["summary"].(map[string]interface{})["success_rate"].(float64)*100)
 			return
 		case "perf":
-			testSuite := benchmark.NewTestSuite(dataRoot, result.Config, result.ResourceManager.ResourceManager, result.ParallelProcessor, result.VectorStore)
+			testSuite := benchmark.NewTestSuite(dataRoot, result.Config, result.ResourceManager, result.ParallelProcessor, result.VectorStore)
 			results := testSuite.RunPerformanceTests()
 			report := testSuite.GenerateTestReport(results)
 			fmt.Printf("性能测试完成: %+v\n", report)

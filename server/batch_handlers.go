@@ -10,12 +10,12 @@ import (
 
 // BatchHandlers 批处理相关的HTTP处理器
 type BatchHandlers struct {
-	resourceManager *core.EnhancedResourceManager
+	resourceManager *core.UnifiedResourceManager
 	processor       *processors.ParallelProcessor
 }
 
 // NewBatchHandlers 创建批处理处理器实例
-func NewBatchHandlers(rm *core.EnhancedResourceManager, pp *processors.ParallelProcessor) *BatchHandlers {
+func NewBatchHandlers(rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor) *BatchHandlers {
 	return &BatchHandlers{
 		resourceManager: rm,
 		processor:       pp,

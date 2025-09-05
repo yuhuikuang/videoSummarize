@@ -12,8 +12,8 @@ import (
 )
 
 // GetResourceManager 获取资源管理器
-func GetResourceManager() *core.EnhancedResourceManager {
-	return core.NewEnhancedResourceManager()
+func GetResourceManager() *core.UnifiedResourceManager {
+	return core.GetUnifiedResourceManager()
 }
 
 // CPUWorkerPool CPU工作池
@@ -97,7 +97,7 @@ type LoadBalancerMetrics struct {
 
 // ParallelProcessor 并行处理器
 type ParallelProcessor struct {
-	resourceManager *core.EnhancedResourceManager
+	resourceManager *core.UnifiedResourceManager
 	config          *ParallelProcessorConfig
 	ctx             context.Context
 	cancel          context.CancelFunc
@@ -246,7 +246,7 @@ type BatchResult struct {
 }
 
 // NewParallelProcessor 创建并行处理器
-func NewParallelProcessor(resourceManager *core.EnhancedResourceManager) *ParallelProcessor {
+func NewParallelProcessor(resourceManager *core.UnifiedResourceManager) *ParallelProcessor {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// 获取CPU核心数

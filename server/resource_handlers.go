@@ -10,12 +10,12 @@ import (
 
 // ResourceHandlers 资源管理相关的HTTP处理器
 type ResourceHandlers struct {
-	resourceManager *core.EnhancedResourceManager
+	resourceManager *core.UnifiedResourceManager
 	processor       *processors.ParallelProcessor
 }
 
 // NewResourceHandlers 创建资源处理器实例
-func NewResourceHandlers(rm *core.EnhancedResourceManager, pp *processors.ParallelProcessor) *ResourceHandlers {
+func NewResourceHandlers(rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor) *ResourceHandlers {
 	return &ResourceHandlers{
 		resourceManager: rm,
 		processor:       pp,

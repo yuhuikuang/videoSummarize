@@ -12,13 +12,13 @@ import (
 
 // MonitoringHandlers 监控相关的HTTP处理器
 type MonitoringHandlers struct {
-	resourceManager *core.EnhancedResourceManager
+	resourceManager *core.UnifiedResourceManager
 	processor       *processors.ParallelProcessor
 	vectorStore     *storage.EnhancedVectorStore
 }
 
 // NewMonitoringHandlers 创建监控处理器实例
-func NewMonitoringHandlers(rm *core.EnhancedResourceManager, pp *processors.ParallelProcessor, vs *storage.EnhancedVectorStore) *MonitoringHandlers {
+func NewMonitoringHandlers(rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor, vs *storage.EnhancedVectorStore) *MonitoringHandlers {
 	return &MonitoringHandlers{
 		resourceManager: rm,
 		processor:       pp,

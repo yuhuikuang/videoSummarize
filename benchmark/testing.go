@@ -16,13 +16,13 @@ import (
 type TestSuite struct {
 	dataRoot         string
 	config           *config.Config
-	resourceManager  *core.ResourceManager
+	resourceManager  *core.UnifiedResourceManager
 	parallelProcessor *processors.ParallelProcessor
 	vectorStore      storage.VectorStore
 }
 
 // NewTestSuite 创建测试套件
-func NewTestSuite(dataRoot string, cfg *config.Config, rm *core.ResourceManager, pp *processors.ParallelProcessor, vs storage.VectorStore) *TestSuite {
+func NewTestSuite(dataRoot string, cfg *config.Config, rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor, vs storage.VectorStore) *TestSuite {
 	return &TestSuite{
 		dataRoot:         dataRoot,
 		config:           cfg,

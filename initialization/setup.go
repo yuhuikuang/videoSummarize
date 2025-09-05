@@ -28,7 +28,7 @@ func NewSystemInitializer(dataRoot string) *SystemInitializer {
 // InitializationResult 初始化结果
 type InitializationResult struct {
 	Config            *config.Config
-	ResourceManager   *core.EnhancedResourceManager
+	ResourceManager   *core.UnifiedResourceManager
 	ParallelProcessor *processors.ParallelProcessor
 	VectorStore       storage.VectorStore
 	EnhancedStore     *storage.EnhancedVectorStore
@@ -174,14 +174,13 @@ func (si *SystemInitializer) InitializeEnhancedVectorStore() (*storage.EnhancedV
 }
 
 // InitializeResourceManager 初始化资源管理器
-func (si *SystemInitializer) InitializeResourceManager() (*core.EnhancedResourceManager, error) {
-	// 创建增强资源管理器
-	resourceManager := core.NewEnhancedResourceManager()
+func (si *SystemInitializer) InitializeResourceManager() (*core.UnifiedResourceManager, error) {
+	resourceManager := core.GetUnifiedResourceManager()
 	return resourceManager, nil
 }
 
 // InitializeParallelProcessor 初始化并行处理器
-func (si *SystemInitializer) InitializeParallelProcessor(rm *core.EnhancedResourceManager) (*processors.ParallelProcessor, error) {
+func (si *SystemInitializer) InitializeParallelProcessor(rm *core.UnifiedResourceManager) (*processors.ParallelProcessor, error) {
 	parallelProcessor := processors.NewParallelProcessor(rm)
 	return parallelProcessor, nil
 }
