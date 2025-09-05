@@ -130,9 +130,9 @@ func main() {
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      nil,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  120 * time.Second, // 增加读取超时到2分钟
+		WriteTimeout: 600 * time.Second, // 增加写入超时到10分钟，支持长视频处理
+		IdleTimeout:  180 * time.Second, // 增加空闲超时到3分钟
 	}
 
 	// 优雅关闭处理

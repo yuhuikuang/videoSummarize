@@ -46,7 +46,7 @@ type Document struct {
 	Embed      map[string]float64 // term -> weight
 }
 
-var globalStore VectorStore
+var GlobalStore VectorStore
 
 // 请求和响应类型定义
 type StoreRequest struct {
@@ -138,11 +138,11 @@ type PgVectorStore struct {
 	videoID string // 当前视频ID，用于隔离不同视频的数据
 }
 
-func initVectorStore() error {
+func InitVectorStore() error {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		fmt.Printf("Warning: Failed to load config (%v), using memory store\n", err)
-		globalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+		GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 		return nil
 	}
 
@@ -151,36 +151,36 @@ func initVectorStore() error {
 		if !cfg.HasValidAPI() {
 			config.PrintConfigInstructions()
 			fmt.Println("Warning: API configuration required for Milvus store, falling back to memory store")
-			globalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+			GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 			return nil
 		}
 		s, err := newMilvusVectorStore()
 		if err != nil {
 			fmt.Printf("Warning: Failed to initialize Milvus store (%v), falling back to memory store\n", err)
-			globalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+			GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 			return nil
 		}
-		globalStore = s
+		GlobalStore = s
 		return nil
 	}
 	if storeKind == "pgvector" {
 		if !cfg.HasValidAPI() {
 			config.PrintConfigInstructions()
 			fmt.Println("Warning: API configuration required for PgVector store, falling back to memory store")
-			globalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+			GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 			return nil
 		}
 		s, err := newPgVectorStore()
 		if err != nil {
 			fmt.Printf("Warning: Failed to initialize PgVector store (%v), falling back to memory store\n", err)
-			globalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+			GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 			return nil
 		}
-		globalStore = s
+		GlobalStore = s
 		return nil
 	}
 	// default to in-memory
-	globalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+	GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 	return nil
 }
 
@@ -813,7 +813,7 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "items missing and items.json not found"}); return }
 	if err := json.Unmarshal(b, &items); err != nil { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid items.json"}); return }
 	}
-	cnt := globalStore.Upsert(req.JobID, items)
+	cnt := GlobalStore.Upsert(req.JobID, items)
 	core.WriteJSON(w, http.StatusOK, StoreResponse{JobID: req.JobID, Count: cnt})
 }
 
@@ -829,7 +829,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 	if req.JobID == "" || strings.TrimSpace(req.Query) == "" { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id and query required"}); return }
 	
 	// For pgvector, ensure video_id is set for proper isolation
-	if pgStore, ok := globalStore.(*PgVectorStore); ok {
+	if pgStore, ok := GlobalStore.(*PgVectorStore); ok {
 		if pgStore.GetVideoID() == "" {
 			// If video_id not set, try to derive from job_id or use job_id as fallback
 			pgStore.SetVideoID(req.JobID)
@@ -837,7 +837,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	
-	hits := globalStore.Search(req.JobID, req.Query, req.TopK)
+	hits := GlobalStore.Search(req.JobID, req.Query, req.TopK)
 	ans := synthesizeAnswer(req.Query, hits)
 	core.WriteJSON(w, http.StatusOK, QueryResponse{JobID: req.JobID, Query: req.Query, Answer: ans, Hits: hits})
 }
@@ -899,11 +899,11 @@ func openaiClient() *openai.Client {
 
 // storeItems stores items in vector database
 func storeItems(items []core.Item, jobID string) (int, error) {
-	if globalStore == nil {
+	if GlobalStore == nil {
 		return 0, fmt.Errorf("vector store not initialized")
 	}
 	
-	count := globalStore.Upsert(jobID, items)
+	count := GlobalStore.Upsert(jobID, items)
 	return count, nil
 }
 

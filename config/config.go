@@ -65,7 +65,7 @@ func LoadConfig() (*Config, error) {
 		APIKey:         os.Getenv("API_KEY"),
 		BaseURL:        getEnvOrDefault("BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
 		EmbeddingModel: getEnvOrDefault("EMBEDDING_MODEL", "doubao-embedding-text-240715"),
-		ChatModel:      getEnvOrDefault("CHAT_MODEL", "kimi-k2-250711"),
+		ChatModel:      getEnvOrDefault("CHAT_MODEL", "doubao-1-5-thinking-vision-pro-250428"),
 		PostgresURL:    getEnvOrDefault("POSTGRES_URL", "postgres://postgres:password@localhost:5432/vectordb?sslmode=disable"),
 		GPUAcceleration: getEnvOrDefault("GPU_ACCELERATION", "false") == "true" || getEnvOrDefault("GPU_ACCELERATION", "false") == "1",
 		GPUType:        getEnvOrDefault("GPU_TYPE", "auto"),

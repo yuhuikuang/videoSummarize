@@ -16,8 +16,12 @@ import (
 	"videoSummarize/storage"
 )
 
-// 全局变量
-var globalStore storage.VectorStore
+// 初始化函数
+func init() {
+	if err := storage.InitVectorStore(); err != nil {
+		fmt.Printf("Warning: Failed to initialize vector store: %v\n", err)
+	}
+}
 
 // 辅助函数
 func newID() string {
@@ -64,6 +68,16 @@ func ProcessVideoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func processVideoHandler(w http.ResponseWriter, r *http.Request) {
+	// 添加panic恢复机制
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Panic recovered in processVideoHandler: %v\n", r)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "Internal server error occurred during video processing",
+			})
+		}
+	}()
+
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -91,10 +105,20 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	
 	// Set video ID for vector store isolation
 	// 设置视频ID到存储中
-		if req.VideoID != "" {
-			// 这里可以添加设置视频ID的逻辑
+	if req.VideoID != "" {
+		// 这里可以添加设置视频ID的逻辑
 		fmt.Printf("Set video ID for isolation: %s\n", videoID)
 	}
+
+	// 添加资源清理机制
+	var jobDir string
+	defer func() {
+		// 清理临时文件（可选，根据需要决定是否保留）
+		if jobDir != "" {
+			fmt.Printf("Job directory created: %s\n", jobDir)
+			// 这里可以添加清理逻辑，但通常我们保留处理结果
+		}
+	}()
 
 	response := ProcessVideoResponse{
 		Steps: make([]Step, 0),
@@ -141,10 +165,10 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "completed"})
 	fmt.Println("Audio transcription completed")
 
-	// Step 2.5: Text correction
-	fmt.Println("Starting text correction...")
-	jobDir := filepath.Join(core.DataRoot(), response.JobID)
-	correctedSegments, correctionSession, corrErr := CorrectTranscriptSegments(segments, response.JobID)
+	// Step 2.5: Text correction (Full text processing)
+	fmt.Println("Starting full text correction...")
+	jobDir = filepath.Join(core.DataRoot(), response.JobID)
+	correctedSegments, correctionSession, corrErr := CorrectTranscriptSegmentsFull(segments, response.JobID)
 	if corrErr != nil {
 		fmt.Printf("Text correction failed for job %s: %v\n", response.JobID, corrErr)
 		// 如果修正失败，使用原始转录结果
@@ -200,20 +224,37 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Step 4: Store in vector database
 	fmt.Println("Starting vector storage...")
-	config, configErr := loadConfig()
-	if configErr != nil || !config.HasValidAPI() {
-		if configErr == nil {
-			printConfigInstructions()
-			response.Warnings = append(response.Warnings, "API configuration not found. Vector storage skipped. Please configure API key in config.json for full functionality.")
-		} else {
-			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to load config (%v). Vector storage skipped.", configErr))
+	
+	// 检查GlobalStore是否已初始化
+	if storage.GlobalStore == nil {
+		fmt.Println("Warning: GlobalStore not initialized, attempting to initialize...")
+		if err := storage.InitVectorStore(); err != nil {
+			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to initialize vector store: %v", err))
+			response.Steps = append(response.Steps, Step{Name: "store", Status: "failed", Error: "Vector store initialization failed"})
+		} else if storage.GlobalStore == nil {
+			response.Warnings = append(response.Warnings, "Vector store initialization returned nil")
+			response.Steps = append(response.Steps, Step{Name: "store", Status: "failed", Error: "Vector store is nil after initialization"})
 		}
-		response.Steps = append(response.Steps, Step{Name: "store", Status: "skipped", Error: "API configuration required"})
-		fmt.Println("Vector storage skipped due to missing API configuration")
+	}
+	
+	if storage.GlobalStore != nil {
+		config, configErr := loadConfig()
+		if configErr != nil || !config.HasValidAPI() {
+			if configErr == nil {
+				printConfigInstructions()
+				response.Warnings = append(response.Warnings, "API configuration not found. Vector storage skipped. Please configure API key in config.json for full functionality.")
+			} else {
+				response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to load config (%v). Vector storage skipped.", configErr))
+			}
+			response.Steps = append(response.Steps, Step{Name: "store", Status: "skipped", Error: "API configuration required"})
+			fmt.Println("Vector storage skipped due to missing API configuration")
+		} else {
+			count := storage.GlobalStore.Upsert(response.JobID, items)
+			response.Steps = append(response.Steps, Step{Name: "store", Status: "completed"})
+			fmt.Printf("Vector storage completed. Stored %d items\n", count)
+		}
 	} else {
-		count := globalStore.Upsert(response.JobID, items)
-		response.Steps = append(response.Steps, Step{Name: "store", Status: "completed"})
-		fmt.Printf("Vector storage completed. Stored %d items\n", count)
+		fmt.Println("Vector storage skipped due to GlobalStore being nil")
 	}
 
 	response.Message = fmt.Sprintf("Video processing completed successfully. Job ID: %s", response.JobID)
