@@ -103,10 +103,11 @@ ASR=enhanced-local  # 使用增强版本地Whisper
 WHISPER_MODEL=base  # 或 small, medium, large
 
 # 处理配置
-MAX_RETRIES=3
-PROCESSING_TIMEOUT=600  # 10分钟
+ASR_MAX_RETRIES=3
+ASR_TIMEOUT=600  # 秒
 
-# GPU配置
+# GPU配置（ASR专用）
+ASR_GPU_ENABLED=true
 CUDA_VISIBLE_DEVICES=0  # 如果有GPU
 ```
 
@@ -114,6 +115,9 @@ CUDA_VISIBLE_DEVICES=0  # 如果有GPU
 ```cmd
 set ASR=enhanced-local
 set WHISPER_MODEL=base
+set ASR_MAX_RETRIES=3
+set ASR_TIMEOUT=600
+set ASR_GPU_ENABLED=true
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 ```
@@ -204,7 +208,7 @@ ls data/[job_id]/
 #### 测试2: 完整流水线
 ```bash
 # 运行完整处理
-curl -X POST http://localhost:8080/pipeline -F "video=@ai_10min.mp4"
+curl -X POST http://localhost:8080/process-video -F "video=@ai_10min.mp4"
 
 # 检查最终结果
 ls data/[job_id]/

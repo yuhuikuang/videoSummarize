@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -50,9 +51,9 @@ type ProcessVideoRequest struct {
 }
 
 type ProcessVideoResponse struct {
-	JobID    string `json:"job_id"`
-	Message  string `json:"message"`
-	Steps    []Step `json:"steps"`
+	JobID    string   `json:"job_id"`
+	Message  string   `json:"message"`
+	Steps    []Step   `json:"steps"`
 	Warnings []string `json:"warnings,omitempty"`
 }
 
@@ -102,7 +103,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Generate video ID from video path for isolation
 	videoID := generateVideoID(req.VideoPath)
-	
+
 	// Set video ID for vector store isolation
 	// 设置视频ID到存储中
 	if req.VideoID != "" {
@@ -121,7 +122,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	response := ProcessVideoResponse{
-		Steps: make([]Step, 0),
+		Steps:    make([]Step, 0),
 		Warnings: make([]string, 0),
 	}
 
@@ -181,7 +182,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("Failed to save correction session for job %s: %v\n", response.JobID, err)
 			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to save correction session: %v", err))
 		}
-		
+
 		// 保存修正后的转录文件
 		if err := SaveCorrectedTranscript(jobDir, correctedSegments); err != nil {
 			fmt.Printf("Failed to save corrected transcript for job %s: %v\n", response.JobID, err)
@@ -202,7 +203,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Step 3: Generate summaries
 	fmt.Println("Starting summary generation...")
-	summarizer := MockSummarizer{}
+	summarizer := pickSummaryProvider()
 	items, err := summarizer.Summarize(segments, frames)
 	if err != nil {
 		response.Steps = append(response.Steps, Step{Name: "summarize", Status: "failed", Error: err.Error()})
@@ -222,9 +223,28 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	response.Steps = append(response.Steps, Step{Name: "summarize", Status: "completed"})
 	fmt.Println("Summary generation completed")
 
+	// Step 3.5: Detect keypoints
+	fmt.Println("Starting keypoint detection...")
+	keypointDetector := NewKeypointDetector()
+	keypoints, err := keypointDetector.DetectKeypoints(req.VideoPath, segments, frames)
+	if err != nil {
+		log.Printf("[%s] Keypoint detection failed: %v", response.JobID, err)
+		response.Warnings = append(response.Warnings, fmt.Sprintf("Keypoint detection failed: %v", err))
+		keypoints = []Keypoint{} // 使用空的关键点列表
+	} else {
+		// 保存关键点
+		keypointsPath := filepath.Join(core.DataRoot(), response.JobID, "keypoints.json")
+		if err := saveJSON(keypointsPath, keypoints); err != nil {
+			log.Printf("[%s] Failed to save keypoints: %v", response.JobID, err)
+			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to save keypoints: %v", err))
+		}
+		response.Steps = append(response.Steps, Step{Name: "keypoint_detection", Status: "completed"})
+		fmt.Printf("[%s] Detected %d keypoints\n", response.JobID, len(keypoints))
+	}
+
 	// Step 4: Store in vector database
 	fmt.Println("Starting vector storage...")
-	
+
 	// 检查GlobalStore是否已初始化
 	if storage.GlobalStore == nil {
 		fmt.Println("Warning: GlobalStore not initialized, attempting to initialize...")
@@ -236,7 +256,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 			response.Steps = append(response.Steps, Step{Name: "store", Status: "failed", Error: "Vector store is nil after initialization"})
 		}
 	}
-	
+
 	if storage.GlobalStore != nil {
 		config, configErr := loadConfig()
 		if configErr != nil || !config.HasValidAPI() {
@@ -282,15 +302,15 @@ func generateVideoID(videoPath string) string {
 	// Clean the path and get base name
 	cleanPath := filepath.Clean(videoPath)
 	baseName := filepath.Base(cleanPath)
-	
+
 	// Remove extension and normalize
 	name := strings.TrimSuffix(baseName, filepath.Ext(baseName))
 	name = strings.ToLower(name)
-	
+
 	// Generate MD5 hash of full path for uniqueness
 	hash := md5.Sum([]byte(cleanPath))
 	hashStr := hex.EncodeToString(hash[:])
-	
+
 	// Combine name with short hash for readability and uniqueness
 	return fmt.Sprintf("%s_%s", name, hashStr[:8])
 }

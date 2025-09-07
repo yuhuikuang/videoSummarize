@@ -4,10 +4,11 @@
 # ==== Go Binaries and Build Artifacts ====
 # Binaries for programs and plugins
 *.exe
-*.exe~
 *.dll
 *.so
 *.dylib
+videoSummarize
+videoSummarize.exe
 
 # Test binary, built with `go test -c`
 *.test
@@ -43,15 +44,14 @@ videos/
 *.avi
 *.mov
 *.mkv
-*.flv
 *.webm
-*.m4v
+*.flv
+*.wmv
 
 # Audio files
 *.wav
 *.mp3
 *.m4a
-*.aac
 *.flac
 *.ogg
 
@@ -66,8 +66,9 @@ videos/
 # ==== Runtime Data and Temporary Files ====
 # Application data directory
 data/
-tmp/
+logs/
 temp/
+cache/
 *.tmp
 
 # Log files
@@ -150,3 +151,84 @@ backup_*/
 docker-data/
 postgres-data/
 milvus-data/
+
+# 编译文件排除
+*.exe
+*.dll
+*.so
+*.dylib
+videoSummarize
+videoSummarize.exe
+
+# 运行时数据排除
+data/
+logs/
+temp/
+cache/
+
+# 媒体文件排除
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.flv
+*.wmv
+*.mp3
+*.wav
+*.m4a
+*.flac
+*.ogg
+
+# 配置文件处理 (包含敏感信息)
+config.json
+keypoint_config.json
+
+# Go 特定文件
+*.test
+*.prof
+*.pprof
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE 文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 临时文件
+*.tmp
+*.temp
+*.log
+
+# Python 相关 (用于特征提取脚本)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+
+# Node.js 相关 (如果有前端)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 测试结果文件
+results/
+*.json
+!config/*.json.example
+!go.mod
+!go.sum
+
+# Docker 相关
+.docker/
+docker-compose.override.yml

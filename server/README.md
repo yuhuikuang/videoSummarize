@@ -82,9 +82,26 @@ integrityHandlers := server.NewIntegrityHandlers(dataRoot)
 // 注册路由
 http.HandleFunc("/health", monitoringHandlers.HealthCheckHandler)
 http.HandleFunc("/stats", monitoringHandlers.StatsHandler)
+http.HandleFunc("/diagnostics", monitoringHandlers.DiagnosticsHandler)
+
 http.HandleFunc("/resources", resourceHandlers.ResourceHandler)
+http.HandleFunc("/enhanced-resources", resourceHandlers.EnhancedResourceHandler)
+http.HandleFunc("/processor-status", resourceHandlers.ProcessorStatusHandler)
+
 http.HandleFunc("/process-batch", batchHandlers.ProcessBatchHandler)
-// ... 其他路由
+http.HandleFunc("/pipeline-status", batchHandlers.PipelineStatusHandler)
+http.HandleFunc("/batch-config", batchHandlers.BatchConfigHandler)
+http.HandleFunc("/batch-metrics", batchHandlers.BatchMetricsHandler)
+
+http.HandleFunc("/vector-rebuild", vectorHandlers.VectorRebuildHandler)
+http.HandleFunc("/vector-status", vectorHandlers.VectorStatusHandler)
+http.HandleFunc("/index-status", vectorHandlers.IndexStatusHandler)
+http.HandleFunc("/index-rebuild", vectorHandlers.IndexRebuildHandler)
+http.HandleFunc("/index-optimize", vectorHandlers.IndexOptimizeHandler)
+http.HandleFunc("/search-strategies", vectorHandlers.SearchStrategiesHandler)
+
+http.HandleFunc("/integrity", integrityHandlers.IntegrityHandler)
+http.HandleFunc("/repair", integrityHandlers.RepairHandler)
 ```
 
 ## 响应格式

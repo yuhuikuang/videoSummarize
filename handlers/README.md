@@ -121,34 +121,30 @@ handlers 模块负责处理HTTP请求，提供RESTful API接口，是系统与�
 
 ## API接口说明
 
-### 视频处理接口
-- `POST /process/parallel`: 并行处理视频
-- `POST /process/batch`: 批量处理视频
-- `GET /pipeline/status`: 获取管道状态
+### 视频处理接口（与 main.go 一致）
+- `POST /process-parallel`: 并行处理视频
+- `POST /process-batch`: 批量处理视频
+- `GET /pipeline-status`: 获取管道状态
 
-### 资源管理接口
-- `GET /resource/enhanced`: 获取增强资源状态
-- `GET /processor/status`: 获取处理器状态
-- `GET /metrics`: 获取性能指标
-- `GET /config`: 获取配置信息
+### 资源管理接口（与 main.go 一致）
+- `GET /resources`: 基础资源状态
+- `GET /enhanced-resources`: 增强资源状态
+- `GET /processor-status`: 处理器状态
+- `GET /health`: 健康检查
+- `GET /stats`: 系统统计
+- `GET /diagnostics`: 系统诊断
 
-### 向量存储接口
-- `POST /vector/rebuild`: 重建向量索引
-- `GET /vector/status`: 获取向量存储状态
-- `POST /search/hybrid`: 混合搜索
-- `POST /batch/upsert`: 批量插入更新
+### 向量与搜索接口（与 main.go 一致）
+- `POST /vector-rebuild`: 重建向量索引
+- `GET /vector-status`: 向量存储状态
+- `GET /index-status`: 索引状态
+- `POST /index-rebuild`: 重建索引
+- `POST /index-optimize`: 优化索引
+- `GET /search-strategies`: 搜索策略
 
-### 索引管理接口
-- `GET /index/status`: 索引状态
-- `POST /index/rebuild`: 重建索引
-- `POST /index/optimize`: 优化索引
-- `GET /search/strategies`: 搜索策略
-
-### 作业管理接口
-- `POST /job/submit`: 提交作业
-- `POST /cleanup`: 清理操作
-- `GET /batch/config`: 批量配置
-- `GET /batch/metrics`: 批量指标
+### 作业与批量接口（与 main.go 一致）
+- `GET|POST /batch-config`: 批量配置
+- `GET /batch-metrics`: 批量指标
 
 ## 特点
 
@@ -165,16 +161,32 @@ handlers 模块负责处理HTTP请求，提供RESTful API接口，是系统与�
 handlers模块通过HTTP服务器提供API接口，客户端可以通过HTTP请求与系统交互：
 
 ```bash
-# 处理单个视频
-curl -X POST http://localhost:8080/process/parallel \
+# 并行处理单个视频
+curl -X POST http://localhost:8080/process-parallel \
   -H "Content-Type: application/json" \
   -d '{"video_path": "video.mp4", "priority": 1}'
 
 # 批量处理视频
-curl -X POST http://localhost:8080/process/batch \
+curl -X POST http://localhost:8080/process-batch \
   -H "Content-Type: application/json" \
-  -d '{"videos": ["video1.mp4", "video2.mp4"], "priority": 1}'
+  -d '{"video_paths": ["video1.mp4", "video2.mp4"], "priority": 1}'
 
 # 查询处理状态
-curl http://localhost:8080/pipeline/status?pipeline_id=xxx
+curl http://localhost:8080/pipeline-status?pipeline_id=xxx
+
+# 资源与监控
+curl http://localhost:8080/resources
+curl http://localhost:8080/enhanced-resources
+curl http://localhost:8080/processor-status
+curl http://localhost:8080/health
+curl http://localhost:8080/stats
+curl http://localhost:8080/diagnostics
+
+# 向量与索引
+curl -X POST http://localhost:8080/vector-rebuild
+curl http://localhost:8080/vector-status
+curl http://localhost:8080/index-status
+curl -X POST http://localhost:8080/index-rebuild
+curl -X POST http://localhost:8080/index-optimize
+curl http://localhost:8080/search-strategies
 ```

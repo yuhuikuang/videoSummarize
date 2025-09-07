@@ -38,6 +38,12 @@ func main() {
 
 	log.Printf("系统初始化成功")
 
+	// 创建关键点处理器
+	keypointHandlers, err := server.NewKeypointHandlers()
+	if err != nil {
+		log.Printf("Warning: Failed to create keypoint handlers: %v", err)
+	}
+
 	// 创建HTTP处理器
 	monitoringHandlers := server.NewMonitoringHandlers(result.ResourceManager, result.ParallelProcessor, result.EnhancedStore)
 	resourceHandlers := server.NewResourceHandlers(result.ResourceManager, result.ParallelProcessor)
@@ -49,6 +55,7 @@ func main() {
 	// 处理器路由
 	http.HandleFunc("/process-video", processors.ProcessVideoHandler)
 	http.HandleFunc("/preprocess", processors.PreprocessHandler)
+	http.HandleFunc("/preprocess-enhanced", processors.PreprocessWithAudioEnhancementHandler)
 	http.HandleFunc("/transcribe", processors.TranscribeHandler)
 	http.HandleFunc("/correct-text", processors.CorrectTextHandler)
 	http.HandleFunc("/summarize", processors.SummarizeHandler)
@@ -87,6 +94,13 @@ func main() {
 	// 文件完整性路由
 	http.HandleFunc("/integrity", integrityHandlers.IntegrityHandler)
 	http.HandleFunc("/repair", integrityHandlers.RepairHandler)
+
+	// 关键点路由
+	if keypointHandlers != nil {
+		http.HandleFunc("/keypoints", keypointHandlers.GetKeypointsHandler)
+		http.HandleFunc("/keypoints/regenerate", keypointHandlers.RegenerateKeypointsHandler)
+		http.HandleFunc("/keypoints/adjust", keypointHandlers.AdjustKeypointHandler)
+	}
 
 	// 处理命令行参数
 	if len(os.Args) > 2 {

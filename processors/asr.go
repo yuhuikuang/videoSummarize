@@ -302,16 +302,13 @@ func transcribeHandler(w http.ResponseWriter, r *http.Request) {
 	if audio == "" { audio = filepath.Join(jobDir, "audio.wav") }
 	
 	rm.UpdateJobStep(req.JobID, "transcription")
-	prov := pickASRProvider()
-	segs, err := prov.Transcribe(audio)
+	segs, err := transcribeAudio(audio, req.JobID)
 	if err != nil {
 		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	rm.UpdateJobStep(req.JobID, "transcription_completed")
 	
-	// persist
-	_ = os.WriteFile(filepath.Join(jobDir, "transcript.json"), mustJSON(segs), 0644)
 	core.WriteJSON(w, http.StatusOK, TranscribeResponse{JobID: req.JobID, Segments: segs})
 }
 
@@ -321,15 +318,24 @@ func TranscribeAudio(audioPath, jobID string) ([]core.Segment, error) {
 }
 
 func transcribeAudio(audioPath, jobID string) ([]core.Segment, error) {
+	log.Printf("Starting transcription for job %s, audio: %s", jobID, audioPath)
 	prov := pickASRProvider()
 	segs, err := prov.Transcribe(audioPath)
 	if err != nil {
 		return nil, fmt.Errorf("transcribe audio: %v", err)
 	}
+	log.Printf("Transcription completed for job %s, got %d segments", jobID, len(segs))
 
 	// persist original transcript
 	jobDir := filepath.Join(core.DataRoot(), jobID)
-	_ = os.WriteFile(filepath.Join(jobDir, "transcript.json"), mustJSON(segs), 0644)
+	transcriptPath := filepath.Join(jobDir, "transcript.json")
+	log.Printf("Saving transcript to: %s", transcriptPath)
+	err = os.WriteFile(transcriptPath, mustJSON(segs), 0644)
+	if err != nil {
+		log.Printf("Failed to save transcript: %v", err)
+		return nil, fmt.Errorf("failed to save transcript: %v", err)
+	}
+	log.Printf("Transcript saved successfully")
 
 	// 添加文本修正阶段
 	correctedSegs, correctionSession, err := CorrectTranscriptSegments(segs, jobID)

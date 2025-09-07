@@ -1,0 +1,43 @@
+{
+  "keypoint_detection": {
+    "audio_threshold": 0.3,
+    "visual_threshold": 0.25,
+    "semantic_threshold": 0.4,
+    "min_interval": 10.0,
+    "max_keypoints": 20,
+    "enable_topic_segmentation": true,
+    "enable_multi_modal_fusion": true
+  },
+  "topic_segmentation": {
+    "similarity_threshold": 0.3,
+    "min_segment_length": 30.0,
+    "max_segments": 15,
+    "importance_threshold": 5.0
+  },
+  "feature_extraction": {
+    "audio_features": {
+      "mfcc_coefficients": 13,
+      "frame_length": 2048,
+      "hop_length": 512,
+      "window_function": "hann"
+    },
+    "visual_features": {
+      "histogram_bins": 256,
+      "edge_threshold_low": 50,
+      "edge_threshold_high": 150,
+      "motion_detection_corners": 100
+    },
+    "semantic_features": {
+      "max_keywords": 5,
+      "stop_words_enabled": true,
+      "sentiment_analysis_enabled": true,
+      "embedding_model": "doubao-embedding-text-240715"
+    }
+  },
+  "performance": {
+    "enable_gpu_acceleration": true,
+    "parallel_processing": true,
+    "cache_features": true,
+    "feature_cache_ttl": 3600
+  }
+}

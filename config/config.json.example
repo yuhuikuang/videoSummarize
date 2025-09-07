@@ -2,8 +2,11 @@
   "api_key": "your-volcengine-api-key-here",
   "base_url": "https://ark.cn-beijing.volces.com/api/v3",
   "embedding_model": "doubao-embedding-text-240715",
-  "chat_model": "kimi-k2-250711",
+  "chat_model": "doubao-1-5-thinking-vision-pro-250428",
   "postgres_url": "postgres://postgres:password@localhost:5432/vectordb?sslmode=disable",
   "gpu_acceleration": true,
-  "gpu_type": "auto"
+  "gpu_type": "auto",
+  "openai": {
+    "api_key": "your-openai-api-key-here"
+  }
 }

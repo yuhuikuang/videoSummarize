@@ -241,12 +241,41 @@ curl -X POST http://localhost:8080/query \
 
 ## 配置说明
 
-### 环境变量
+### 存储后端选择
+- 使用环境变量 `STORE` 指定后端类型：`memory` | `milvus` | `pgvector`
+- 若未设置，默认使用 `memory`
+
+### 环境变量（按后端分类）
+
+通用：
+- `API_KEY`: 向量化（OpenAI 等）所需 API 密钥
+- `EMBEDDING_MODEL`: 嵌入模型名称（例如 text-embedding-3-small 等）
+
+Milvus（或 Zilliz Cloud）：
+- `MILVUS_ADDR`: Milvus 连接地址（host:port 或 Zilliz Endpoint）
+- `MILVUS_USERNAME`: 用户名（可选）
+- `MILVUS_PASSWORD`: 密码（可选）
+- `MILVUS_API_KEY`: Zilliz Cloud API Key（可选）
+- `MILVUS_COLLECTION`: 集合名称（可选，未设置时按视频/作业自动组织）
+
+PostgreSQL（pgvector）：
+- `DATABASE_URL`: 完整连接串（优先使用）
+- 或以下分项变量（当未提供 DATABASE_URL 时使用）：
+  - `POSTGRES_URL`: 备用完整连接串（如存在将被解析使用）
+  - `POSTGRES_HOST`
+  - `POSTGRES_PORT`
+  - `POSTGRES_USER`
+  - `POSTGRES_PASSWORD`
+  - `POSTGRES_DB`
+
+说明：
+- 连接优先级：`DATABASE_URL` > `POSTGRES_URL` > 分项变量（HOST/PORT/USER/PASSWORD/DB）
+- OpenAI 客户端在需要向量化时创建，密钥来自 `API_KEY`
 - `VECTOR_STORE_TYPE`: 存储类型（memory/milvus/pgvector）
 - `MILVUS_HOST`: Milvus服务器地址
 - `MILVUS_PORT`: Milvus端口
 - `POSTGRES_URL`: PostgreSQL连接字符串
-- `OPENAI_API_KEY`: OpenAI API密钥
+- `API_KEY`: OpenAI/LLM API密钥
 - `EMBEDDING_MODEL`: 嵌入模型名称
 
 ### 性能调优

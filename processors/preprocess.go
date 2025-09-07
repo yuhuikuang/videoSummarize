@@ -57,13 +57,53 @@ func PreprocessHandler(w http.ResponseWriter, r *http.Request) {
 	preprocessHandler(w, r)
 }
 
+// PreprocessWithAudioEnhancementHandler 带音频增强的预处理处理器
+func PreprocessWithAudioEnhancementHandler(w http.ResponseWriter, r *http.Request) {
+	preprocessWithAudioEnhancementHandler(w, r)
+}
+
 func preprocessHandler(w http.ResponseWriter, r *http.Request) {
+	preprocessHandlerInternal(w, r, false)
+}
+
+func preprocessWithAudioEnhancementHandler(w http.ResponseWriter, r *http.Request) {
+	preprocessHandlerInternal(w, r, true)
+}
+
+func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAudioPreprocessing bool) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 
-	jobID := newID()
+	// 尝试从表单或JSON中获取job_id，如果没有则生成新的
+	var jobID string
+	ct := r.Header.Get("Content-Type")
+	if len(ct) >= 19 && ct[:19] == "multipart/form-data" {
+		// 从multipart表单中获取job_id
+		if err := r.ParseMultipartForm(128 << 20); err == nil {
+			if formJobID := r.FormValue("job_id"); formJobID != "" {
+				jobID = formJobID
+			}
+		}
+	} else {
+		// 从JSON中获取job_id
+		body := make(map[string]interface{})
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			if jsonJobID, ok := body["job_id"].(string); ok && jsonJobID != "" {
+				jobID = jsonJobID
+			}
+		}
+		// 重新设置body以供后续使用
+		bodyBytes, _ := json.Marshal(body)
+		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
+	}
+	
+	// 如果没有提供job_id，则生成新的
+	if jobID == "" {
+		jobID = newID()
+	}
+	
 	jobDir := filepath.Join(core.DataRoot(), jobID)
 	framesDir := filepath.Join(jobDir, "frames")
 
@@ -84,9 +124,8 @@ func preprocessHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var inputPath string
-	ct := r.Header.Get("Content-Type")
+	ct = r.Header.Get("Content-Type")
 	if len(ct) >= 19 && ct[:19] == "multipart/form-data" {
-		var err error
 		inputPath, err = saveUploadedVideo(r, jobDir)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -112,13 +151,27 @@ func preprocessHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract audio
-	log.Printf("[%s] Extracting audio...", jobID)
-	rm.UpdateJobStep(jobID, "audio_extraction")
+	if enableAudioPreprocessing {
+		log.Printf("[%s] Extracting and preprocessing audio...", jobID)
+		rm.UpdateJobStep(jobID, "audio_extraction_with_preprocessing")
+	} else {
+		log.Printf("[%s] Extracting audio...", jobID)
+		rm.UpdateJobStep(jobID, "audio_extraction")
+	}
+	
 	audioPath := filepath.Join(jobDir, "audio.wav")
-	if err := extractAudio(inputPath, audioPath); err != nil {
-		log.Printf("[%s] Audio extraction failed: %v", jobID, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract audio: %v", err)})
-		return
+	if enableAudioPreprocessing {
+		if err := extractAudioWithPreprocessing(inputPath, audioPath, true); err != nil {
+			log.Printf("[%s] Audio extraction with preprocessing failed: %v", jobID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract and preprocess audio: %v", err)})
+			return
+		}
+	} else {
+		if err := extractAudio(inputPath, audioPath); err != nil {
+			log.Printf("[%s] Audio extraction failed: %v", jobID, err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract audio: %v", err)})
+			return
+		}
 	}
 
 	// Extract frames at fixed interval (every 5 seconds)
@@ -147,8 +200,11 @@ func preprocessHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveUploadedVideo(r *http.Request, jobDir string) (string, error) {
-	if err := r.ParseMultipartForm(128 << 20); err != nil {
-		return "", err
+	// 检查是否已经解析过multipart表单
+	if r.MultipartForm == nil {
+		if err := r.ParseMultipartForm(128 << 20); err != nil {
+			return "", err
+		}
 	}
 	file, header, err := r.FormFile("video")
 	if err != nil {
@@ -196,6 +252,82 @@ func extractAudio(inputPath, audioOut string) error {
 	
 	args = append(args, "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", audioOut)
 	return runFFmpeg(args)
+}
+
+// extractAudioWithPreprocessing 提取音频并进行预处理
+func extractAudioWithPreprocessing(inputPath, audioOut string, enablePreprocessing bool) error {
+	// 首先提取原始音频
+	if err := extractAudio(inputPath, audioOut); err != nil {
+		return fmt.Errorf("音频提取失败: %v", err)
+	}
+	
+	// 如果启用预处理，则进行音频预处理
+	if enablePreprocessing {
+		log.Printf("开始音频预处理流程...")
+		
+		// 创建音频预处理器
+		preprocessor, err := NewAudioPreprocessor()
+		if err != nil {
+			log.Printf("创建音频预处理器失败: %v", err)
+			return nil // 不返回错误，使用原始音频
+		}
+		
+		// 获取输出目录
+		outputDir := filepath.Dir(audioOut)
+		
+		// 执行音频预处理
+		result, err := preprocessor.ProcessAudioWithRetry(audioOut, outputDir, 3)
+		if err != nil {
+			log.Printf("音频预处理失败，使用原始音频: %v", err)
+			return nil // 不返回错误，使用原始音频
+		}
+		
+		// 复制最终处理后的音频文件到目标位置
+		if err := copyFile(result.EnhancedPath, audioOut); err != nil {
+			log.Printf("复制预处理音频文件失败: %v", err)
+			return nil // 不返回错误，使用原始音频
+		}
+		
+		// 保留预处理文件用于验证，添加后缀以区分
+		denoisedBackup := filepath.Join(filepath.Dir(audioOut), "audio_denoised.wav")
+		enhancedBackup := filepath.Join(filepath.Dir(audioOut), "audio_enhanced.wav")
+		
+		log.Printf("保存音频预处理备份文件...")
+		log.Printf("降噪文件: %s -> %s", result.DenoisedPath, denoisedBackup)
+		log.Printf("增强文件: %s -> %s", result.EnhancedPath, enhancedBackup)
+		
+		// 检查源文件是否存在
+		if _, err := os.Stat(result.DenoisedPath); err != nil {
+			log.Printf("降噪文件不存在: %v", err)
+		} else {
+			// 保存降噪版本的备份
+			if err := copyFile(result.DenoisedPath, denoisedBackup); err != nil {
+				log.Printf("保存降噪音频备份失败: %v", err)
+			} else {
+				log.Printf("降噪音频备份保存成功: %s", denoisedBackup)
+			}
+		}
+		
+		if _, err := os.Stat(result.EnhancedPath); err != nil {
+			log.Printf("增强文件不存在: %v", err)
+		} else {
+			// 保存增强版本的备份
+			if err := copyFile(result.EnhancedPath, enhancedBackup); err != nil {
+				log.Printf("保存增强音频备份失败: %v", err)
+			} else {
+				log.Printf("增强音频备份保存成功: %s", enhancedBackup)
+			}
+		}
+		
+		// 清理临时文件（但保留备份）
+		// 注意：不要删除源文件，因为它们可能就是我们需要的备份文件
+		// os.Remove(result.DenoisedPath)
+		// os.Remove(result.EnhancedPath)
+		
+		log.Printf("音频预处理完成，处理时间: %v", result.ProcessingTime)
+	}
+	
+	return nil
 }
 
 func extractFramesAtInterval(inputPath, framesDir string, intervalSec int) error {
@@ -346,11 +478,25 @@ func validateVideoFile(path string) (*VideoInfo, error) {
 
 // extractAudioEnhanced extracts audio with retry mechanism
 func extractAudioEnhanced(inputPath, outputPath string, maxRetries int) error {
+	return extractAudioEnhancedWithPreprocessing(inputPath, outputPath, maxRetries, false)
+}
+
+// extractAudioEnhancedWithPreprocessing 增强版音频提取，支持预处理
+func extractAudioEnhancedWithPreprocessing(inputPath, outputPath string, maxRetries int, enablePreprocessing bool) error {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err := extractAudio(inputPath, outputPath)
+		var err error
+		
+		// 使用带预处理的音频提取
+		if enablePreprocessing {
+			err = extractAudioWithPreprocessing(inputPath, outputPath, true)
+		} else {
+			err = extractAudio(inputPath, outputPath)
+		}
+		
 		if err == nil {
 			// Verify audio file was created and has content
 			if stat, statErr := os.Stat(outputPath); statErr == nil && stat.Size() > 0 {
+				log.Printf("音频提取成功 (预处理: %v), 文件大小: %d bytes", enablePreprocessing, stat.Size())
 				return nil
 			}
 			err = fmt.Errorf("audio file empty or not created")
@@ -483,4 +629,36 @@ func processVideoWithFallback(jobID, videoPath string) error {
 	
 	log.Printf("[%s] Video preprocessing completed successfully", jobID)
 	return nil
+}
+
+// copyFileEnhanced 增强版文件复制函数，支持重试和验证
+func copyFileEnhanced(src, dst string, maxRetries int) error {
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := copyFile(src, dst)
+		if err == nil {
+			// 验证复制的文件
+			if srcStat, statErr := os.Stat(src); statErr == nil {
+				if dstStat, statErr2 := os.Stat(dst); statErr2 == nil {
+					if srcStat.Size() == dstStat.Size() {
+						return nil
+					}
+					err = fmt.Errorf("file size mismatch: src=%d, dst=%d", srcStat.Size(), dstStat.Size())
+				} else {
+					err = fmt.Errorf("cannot stat destination file: %v", statErr2)
+				}
+			} else {
+				err = fmt.Errorf("cannot stat source file: %v", statErr)
+			}
+		}
+		
+		log.Printf("File copy attempt %d/%d failed: %v", attempt, maxRetries, err)
+		
+		if attempt < maxRetries {
+			time.Sleep(time.Duration(attempt) * time.Second)
+			// 清理失败的文件
+			os.Remove(dst)
+		}
+	}
+	
+	return fmt.Errorf("file copy failed after %d attempts", maxRetries)
 }

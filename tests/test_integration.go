@@ -152,9 +152,3 @@ func truncateString(s string, maxLen int) string {
 	}
 	return s[:maxLen] + "..."
 }
-
-func runIntegrationTest() {
-	fmt.Println("集成测试程序启动")
-	TestIntegration()
-	fmt.Println("集成测试完成")
-}

@@ -103,6 +103,76 @@
 - 多种长度和复杂度的文本样本
 - 边界情况和异常输入
 
+### 5. test_audio_preprocessing.go
+
+**功能**：基础音频预处理功能测试
+
+**主要功能**：
+- 测试增强音频预处理端点 `/preprocess-enhanced`
+- 验证视频文件上传和处理流程
+- 检查音频预处理响应格式
+
+**测试流程**：
+1. 检查测试视频文件存在性
+2. 创建multipart表单上传视频
+3. 发送POST请求到预处理端点
+4. 验证响应状态和内容
+
+### 6. test_enhanced_audio_preprocessing.go
+
+**功能**：增强音频预处理功能的详细测试
+
+**主要功能**：
+- 专门测试增强音频预处理功能
+- 验证预处理端点的完整性
+- 检查处理结果的正确性
+
+**测试特点**：
+- 使用3分钟测试视频进行快速验证
+- 详细的错误处理和状态检查
+- 清晰的成功/失败反馈
+
+### 7. test_audio_comparison.go
+
+**功能**：音频预处理效果对比测试
+
+**主要结构体**：
+- `ProcessingResult`：单次处理结果记录
+  - `ProcessingType`：处理类型（预处理/标准）
+  - `VideoFile`：测试视频文件
+  - `StartTime/EndTime`：处理时间范围
+  - `Duration`：处理耗时
+  - 各步骤响应数据
+
+- `ComparisonReport`：完整对比报告
+  - `TestTime`：测试时间
+  - `WithPreprocessing`：预处理结果
+  - `WithoutPreprocess`：标准处理结果
+  - `PerformanceAnalysis`：性能分析数据
+
+**主要函数**：
+- `testCompleteWorkflow()`：测试完整工作流程
+- `callPreprocessWithJobID()`：带job_id的预处理调用
+- `callTranscribeWithJobID()`：带job_id的转录调用
+- `callCorrectWithJobID()`：带job_id的文本修正调用
+- `callSummarizeWithJobID()`：带job_id的摘要生成调用
+- `callStoreWithJobID()`：带job_id的数据存储调用
+- `generateAnalysis()`：生成对比分析
+- `saveReport()`：保存测试报告
+
+**测试流程**：
+1. 使用音频预处理的完整视频处理流程
+2. 不使用音频预处理的标准处理流程
+3. 性能对比分析（处理时间、成功率等）
+4. 生成详细的JSON格式测试报告
+
+**分析指标**：
+- 处理时间对比
+- 预处理开销百分比
+- 成功率统计
+- 错误信息记录
+- 音频质量效果评估
+
 ## 测试执行
 
 ### 运行单个测试
@@ -113,6 +183,11 @@ go run tests/test_integration.go
 
 # 运行性能测试
 go run tests/performance.go
+
+# 运行音频预处理测试
+go run tests/test_audio_preprocessing.go
+go run tests/test_enhanced_audio_preprocessing.go
+go run tests/test_audio_comparison.go
 
 # 运行单元测试
 go test tests/parallel_processor_test.go
