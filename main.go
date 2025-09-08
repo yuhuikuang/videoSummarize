@@ -80,6 +80,7 @@ func main() {
 	// 批处理路由
 	http.HandleFunc("/process-batch", batchHandlers.ProcessBatchHandler)
 	http.HandleFunc("/pipeline-status", batchHandlers.PipelineStatusHandler)
+	http.HandleFunc("/unified-status", batchHandlers.UnifiedStatusHandler)
 	http.HandleFunc("/batch-config", batchHandlers.BatchConfigHandler)
 	http.HandleFunc("/batch-metrics", batchHandlers.BatchMetricsHandler)
 

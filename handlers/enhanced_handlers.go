@@ -11,131 +11,30 @@ import (
 	"strings"
 	"time"
 
-
 	"videoSummarize/core"
+	"videoSummarize/processors"
 	"videoSummarize/storage"
 )
 
 // 类型定义
 type EnhancedVectorStore = storage.Store
-type ParallelProcessor struct {
-	Workers int
-	Queue   chan ProcessJob
-}
 
-// ProcessVideoParallel 并行处理视频
-func (pp *ParallelProcessor) ProcessVideoParallel(videoPath, jobID string, priority int) (*ProcessingPipeline, error) {
-	// 创建处理管道
-	pipeline := &ProcessingPipeline{
-		ID:        jobID,
-		VideoPath: videoPath,
-		JobID:     jobID,
-		Status:    "queued",
-		Priority:  priority,
-	}
 
-	// 创建处理作业并加入队列
-	job := ProcessJob{
-		VideoPath: videoPath,
-		JobID:     jobID,
-		Priority:  priority,
-	}
 
-	// 非阻塞方式加入队列
-	select {
-	case pp.Queue <- job:
-		pipeline.Status = "running"
-		log.Printf("Job %s queued for parallel processing", jobID)
-	default:
-		pipeline.Status = "queue_full"
-		log.Printf("Queue full, job %s cannot be processed immediately", jobID)
-	}
 
-	return pipeline, nil
-}
 
-// ProcessBatch 批量处理
-func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callback func(*BatchResult)) error {
-	// 启动批量处理协程
-	go func() {
-		startTime := time.Now()
-		result := &BatchResult{
-			JobID:       newID(),
-			TotalVideos: len(videos),
-			Completed:   0,
-			Failed:      0,
-			Results:     make(map[string]interface{}),
-			Errors:      make(map[string]error),
-			Duration:    0,
-		}
 
-		// 处理每个视频
-		for i, video := range videos {
-			jobID := fmt.Sprintf("%s_%d", result.JobID, i)
-			
-			// 尝试处理视频
-			pipeline, err := pp.ProcessVideoParallel(video, jobID, priority)
-			if err != nil {
-				result.Failed++
-				result.Errors[video] = err
-				log.Printf("Failed to process video %s: %v", video, err)
-			} else {
-				result.Completed++
-				result.Results[video] = map[string]interface{}{
-					"pipeline_id": pipeline.ID,
-					"status":      pipeline.Status,
-					"priority":    pipeline.Priority,
-				}
-				log.Printf("Successfully queued video %s with pipeline %s", video, pipeline.ID)
-			}
-		}
 
-		// 计算总处理时间
-		result.Duration = time.Since(startTime)
-		callback(result)
-	}()
-	return nil
-}
 
-// GetPipelineStatus 获取管道状态
-func (pp *ParallelProcessor) GetPipelineStatus(pipelineID string) map[string]interface{} {
-	return map[string]interface{}{
-		"pipeline_id": pipelineID,
-		"status":      "running",
-		"progress":    0.5,
-	}
-}
 
-type ProcessingPipeline struct {
-	ID        string
-	VideoPath string
-	JobID     string
-	Status    string
-	Priority  int
-}
-
-type ProcessJob struct {
-	VideoPath string
-	JobID     string
-	Priority  int
-}
-
-type BatchResult struct {
-	JobID       string
-	TotalVideos int
-	Completed   int
-	Failed      int
-	Results     map[string]interface{}
-	Errors      map[string]error
-	Duration    time.Duration
-}
+// 全局变量
+var (
+	globalProcessor *processors.ParallelProcessor
+	globalStore     EnhancedVectorStore
+)
 
 // 全局资源管理器
 var enhancedResourceManager *core.EnhancedResourceManager
-
-// 全局变量声明
-var enhancedStore *EnhancedVectorStore
-var parallelProcessor *ParallelProcessor
 
 // 辅助函数
 func newID() string {
@@ -155,13 +54,10 @@ func writeJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}
 	json.NewEncoder(w).Encode(data)
 }
 
-// GetProcessorStatus 获取处理器状态
-func (pp *ParallelProcessor) GetProcessorStatus() map[string]interface{} {
-	return map[string]interface{}{
-		"workers": pp.Workers,
-		"status":  "running",
-		"queue_size": len(pp.Queue),
-	}
+// 初始化处理器
+func InitProcessor(resourceManager *core.UnifiedResourceManager) {
+	// 使用processors包的ParallelProcessor
+	globalProcessor = processors.NewParallelProcessor(resourceManager)
 }
 
 // enhancedVectorStore 全局变量
@@ -195,45 +91,10 @@ type Hit struct {
 	Content  string                 `json:"content"`
 }
 
-// CleanupCompletedPipelines 清理已完成的管道
-func (pp *ParallelProcessor) CleanupCompletedPipelines() int {
-	// 清理队列中的已完成作业
-	cleanedCount := 0
-	
-	// 检查队列长度
-	queueLen := len(pp.Queue)
-	if queueLen == 0 {
-		log.Println("No jobs in queue to cleanup")
-		return 0
-	}
 
-	// 模拟清理逻辑：清理一些已完成的管道
-	// 在实际实现中，这里应该检查管道状态并清理已完成的
-	maxCleanup := queueLen / 4 // 清理队列中25%的作业
-	if maxCleanup == 0 {
-		maxCleanup = 1
-	}
 
-	for i := 0; i < maxCleanup && len(pp.Queue) > 0; i++ {
-		select {
-		case <-pp.Queue:
-			cleanedCount++
-		default:
-			break
-		}
-	}
-
-	log.Printf("Cleaned up %d completed pipelines", cleanedCount)
-	return cleanedCount
-}
-
-// ProcessParallelHandler 导出的处理器函数
+// ProcessParallelHandler 并行处理视频的HTTP处理器
 func ProcessParallelHandler(w http.ResponseWriter, r *http.Request) {
-	processParallelHandler(w, r)
-}
-
-// processParallelHandler 并行处理视频
-func processParallelHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -263,42 +124,39 @@ func processParallelHandler(w http.ResponseWriter, r *http.Request) {
 		req.Priority = 5 // 默认优先级
 	}
 
-	// 检查并行处理器是否可用
-	if parallelProcessor == nil {
-		http.Error(w, "Parallel processor not available", http.StatusServiceUnavailable)
-		return
-	}
+	// 生成作业ID
+	jobID := newID()
 
-	// 提交并行处理任务
-	pipeline, err := parallelProcessor.ProcessVideoParallel(req.VideoPath, req.JobID, req.Priority)
+	// 提交并行处理
+	pipeline, err := globalProcessor.ProcessVideoParallel(req.VideoPath, jobID, req.Priority)
 	if err != nil {
-		log.Printf("Failed to start parallel processing: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to start processing: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Processing failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	response := map[string]interface{}{
+	// 返回响应
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":     true,
+		"job_id":      jobID,
 		"pipeline_id": pipeline.ID,
-		"job_id":      req.JobID,
-		"video_path":  req.VideoPath,
-		"priority":    req.Priority,
-		"status":      "submitted",
-		"message":     "Video processing started in parallel mode",
-	}
-
-	writeJSONWithStatus(w, http.StatusOK, response)
+		"status":      pipeline.Status,
+		"message":     "Video processing started",
+	})
 }
 
-// processBatchHandler 批量处理视频
-func processBatchHandler(w http.ResponseWriter, r *http.Request) {
+// ProcessBatchHandler 批量处理视频的HTTP处理器
+func ProcessBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// 解析请求
 	var req struct {
 		Videos   []string `json:"videos"`
 		Priority int      `json:"priority"`
+		JobID    string   `json:"job_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -315,14 +173,18 @@ func processBatchHandler(w http.ResponseWriter, r *http.Request) {
 		req.Priority = 5 // 默认优先级
 	}
 
+	if req.JobID == "" {
+		req.JobID = newID()
+	}
+
 	// 检查并行处理器是否可用
-	if parallelProcessor == nil {
+	if globalProcessor == nil {
 		http.Error(w, "Parallel processor not available", http.StatusServiceUnavailable)
 		return
 	}
 
 	// 提交批处理任务
-	err := parallelProcessor.ProcessBatch(req.Videos, req.Priority, func(result *BatchResult) {
+	err := globalProcessor.ProcessBatch(req.Videos, req.Priority, func(result *processors.BatchResult) {
 		log.Printf("Batch job %s completed: %d/%d successful", result.JobID, result.Completed, result.TotalVideos)
 	})
 
@@ -333,6 +195,7 @@ func processBatchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
+		"job_id":       req.JobID,
 		"total_videos": len(req.Videos),
 		"priority":     req.Priority,
 		"status":       "submitted",
@@ -356,12 +219,12 @@ func pipelineStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查并行处理器是否可用
-	if parallelProcessor == nil {
+	if globalProcessor == nil {
 		http.Error(w, "Parallel processor not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	status := parallelProcessor.GetPipelineStatus(pipelineID)
+	status := globalProcessor.GetPipelineStatus(pipelineID)
 	writeJSONWithStatus(w, http.StatusOK, status)
 }
 
@@ -390,12 +253,12 @@ func processorStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 检查并行处理器是否可用
-	if parallelProcessor == nil {
+	if globalProcessor == nil {
 		http.Error(w, "Parallel processor not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	status := parallelProcessor.GetProcessorStatus()
+	status := globalProcessor.GetProcessorStatus()
 	writeJSONWithStatus(w, http.StatusOK, status)
 }
 
@@ -709,8 +572,8 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 清理流水线
 	if req.CleanupType == "pipelines" || req.CleanupType == "all" {
-		if parallelProcessor != nil {
-			parallelProcessor.CleanupCompletedPipelines()
+		if globalProcessor != nil {
+			globalProcessor.CleanupCompletedPipelines()
 			cleanupResults["pipelines"] = "cleaned"
 		}
 	}
@@ -753,8 +616,8 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 获取并行处理器指标
-	if parallelProcessor != nil {
-		metrics["parallel_processor"] = parallelProcessor.GetProcessorStatus()
+	if globalProcessor != nil {
+		metrics["parallel_processor"] = globalProcessor.GetProcessorStatus()
 	}
 
 	// 获取增强向量存储指标
@@ -1195,11 +1058,11 @@ func batchConfigHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		// 获取当前批量配置
-		if enhancedStore == nil {
-			http.Error(w, "Enhanced store not initialized", http.StatusInternalServerError)
+		if globalStore == nil {
+			http.Error(w, "Enhanced vector store not initialized", http.StatusInternalServerError)
 			return
 		}
-		// config := enhancedStore.batchConfig
+		// config := globalStore.batchConfig
 		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"config":  nil, // config,
@@ -1207,8 +1070,8 @@ func batchConfigHandler(w http.ResponseWriter, r *http.Request) {
 
 	case "PUT":
 		// 更新批量配置
-		if enhancedStore == nil {
-			http.Error(w, "Enhanced store not initialized", http.StatusInternalServerError)
+		if globalStore == nil {
+			http.Error(w, "Enhanced vector store not initialized", http.StatusInternalServerError)
 			return
 		}
 
@@ -1233,7 +1096,7 @@ func batchConfigHandler(w http.ResponseWriter, r *http.Request) {
 		//	return
 		// }
 
-		// enhancedStore.UpdateBatchConfig(config)
+		// globalStore.UpdateBatchConfig(config)
 		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"message": "Batch configuration updated successfully",
@@ -1250,12 +1113,12 @@ func batchMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		// 获取批量性能指标
-		if enhancedStore == nil {
-			http.Error(w, "Enhanced store not initialized", http.StatusInternalServerError)
+		if globalStore == nil {
+			http.Error(w, "Enhanced vector store not initialized", http.StatusInternalServerError)
 			return
 		}
 
-		// metrics := enhancedStore.GetBatchMetrics()
+		// metrics := globalStore.GetBatchMetrics()
 		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"metrics": nil, // metrics,
@@ -1263,12 +1126,12 @@ func batchMetricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	case "DELETE":
 		// 重置批量性能指标
-		if enhancedStore == nil {
-			http.Error(w, "Enhanced store not initialized", http.StatusInternalServerError)
+		if globalStore == nil {
+			http.Error(w, "Enhanced vector store not initialized", http.StatusInternalServerError)
 			return
 		}
 
-		// enhancedStore.ResetBatchMetrics()
+		// globalStore.ResetBatchMetrics()
 		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"message": "Batch metrics reset successfully",

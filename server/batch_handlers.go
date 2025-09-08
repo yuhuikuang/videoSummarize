@@ -2,7 +2,9 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
+	"strconv"
 	"time"
 	"videoSummarize/core"
 	"videoSummarize/processors"
@@ -33,9 +35,9 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	var batchRequest struct {
-		Videos   []string `json:"videos"`
+		Videos   []string               `json:"videos"`
 		Options  map[string]interface{} `json:"options"`
-		Priority string   `json:"priority"`
+		Priority int                   `json:"priority"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&batchRequest); err != nil {
@@ -54,82 +56,245 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 创建批处理任务
+	// 检查处理器是否可用
+	if h.processor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Processor unavailable",
+			"message": "Parallel processor is not initialized",
+		})
+		return
+	}
+
+	// 创建批处理任务ID
 	batchID := generateBatchID()
 	
-	// 这里应该将任务提交给处理器
-	// if h.processor != nil {
-	//     h.processor.SubmitBatch(batchRequest)
-	// }
+	// 提交批处理任务给processors.ParallelProcessor
+	err := h.processor.ProcessBatch(batchRequest.Videos, batchRequest.Priority, func(result *processors.BatchResult) {
+		// 批处理完成回调
+		log.Printf("Batch %s completed: %d/%d videos processed successfully", 
+			result.JobID, result.Completed, result.TotalVideos)
+	})
+
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+			"error":   "Failed to start batch processing",
+			"message": err.Error(),
+		})
+		return
+	}
 
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"message":  "Batch processing started",
 		"batch_id": batchID,
 		"status":   "queued",
 		"videos":   len(batchRequest.Videos),
+		"priority": batchRequest.Priority,
 	})
 }
 
 // PipelineStatusHandler 管道状态处理器
 func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Request) {
-	batchID := r.URL.Query().Get("batch_id")
-	if batchID == "" {
-		// 返回所有管道状态
-		pipelineStatus := map[string]interface{}{
-			"active_pipelines": 0,
-			"queued_jobs":      0,
-			"processing_jobs":  0,
-			"completed_jobs":   0,
-			"failed_jobs":      0,
-			"total_throughput": "0 jobs/min",
-			"avg_processing_time": "0s",
-			"timestamp":        time.Now().Unix(),
-		}
-
-		writeJSON(w, http.StatusOK, pipelineStatus)
+	// 检查处理器是否可用
+	if h.processor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Processor unavailable",
+			"message": "Parallel processor is not initialized",
+		})
 		return
 	}
 
-	// 返回特定批次的状态
-	batchStatus := map[string]interface{}{
-		"batch_id":     batchID,
-		"status":       "processing", // 这里应该从实际存储中获取
-		"progress":     "50%",        // 这里应该计算实际进度
-		"total_videos": 10,           // 这里应该从实际数据获取
-		"processed":    5,            // 这里应该从实际数据获取
-		"failed":       0,            // 这里应该从实际数据获取
-		"started_at":   time.Now().Add(-time.Hour).Unix(),
-		"estimated_completion": time.Now().Add(time.Hour).Unix(),
-		"current_stage": "transcription",
+	pipelineID := r.URL.Query().Get("pipeline_id")
+	batchID := r.URL.Query().Get("batch_id")
+	jobID := r.URL.Query().Get("job_id")
+	status := r.URL.Query().Get("status")
+	
+	// 统一状态视图接口
+	if pipelineID != "" {
+		// 返回特定管道的状态
+		pipelineStatus := h.processor.GetPipelineStatus(pipelineID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"type": "pipeline",
+			"data": pipelineStatus,
+			"timestamp": time.Now().Unix(),
+		})
+		return
 	}
 
-	writeJSON(w, http.StatusOK, batchStatus)
+	if jobID != "" {
+		// 通过JobID查询管道状态
+		pipelineStatus := h.processor.GetPipelineStatusByJobID(jobID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"type": "pipeline_by_job",
+			"data": pipelineStatus,
+			"timestamp": time.Now().Unix(),
+		})
+		return
+	}
+
+	if batchID != "" {
+		// 返回特定批处理作业的状态
+		batchStatus := h.processor.GetBatchJobStatus(batchID)
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"type": "batch_job",
+			"data": batchStatus,
+			"timestamp": time.Now().Unix(),
+		})
+		return
+	}
+
+	if status != "" {
+		// 按状态筛选管道或批处理作业
+		pipelinesByStatus := h.processor.GetPipelinesByStatus(status)
+		batchJobsByStatus := h.processor.GetBatchJobsByStatus(status)
+		
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"type": "status_filter",
+			"data": map[string]interface{}{
+				"pipelines": pipelinesByStatus,
+				"batch_jobs": batchJobsByStatus,
+			},
+			"timestamp": time.Now().Unix(),
+		})
+		return
+	}
+
+	// 返回统一状态概览
+	processorStatus := h.processor.GetProcessorStatus()
+	metrics := h.processor.GetProcessorMetrics()
+	allBatchJobs := h.processor.GetAllBatchJobs()
+	
+	unifiedStatus := map[string]interface{}{
+		"processor": map[string]interface{}{
+			"active_pipelines":     processorStatus["active_pipelines"],
+			"queued_jobs":          processorStatus["queued_jobs"],
+			"processing_jobs":      processorStatus["processing_jobs"],
+			"completed_jobs":       metrics.CompletedPipelines,
+			"failed_jobs":          metrics.FailedPipelines,
+			"total_pipelines":      metrics.TotalPipelines,
+			"running_pipelines":    metrics.RunningPipelines,
+			"avg_processing_time":  metrics.AvgProcessingTime.String(),
+			"throughput":           metrics.Throughput,
+			"start_time":           metrics.StartTime.Unix(),
+			"last_update":          metrics.LastUpdate.Unix(),
+		},
+		"batch_jobs": allBatchJobs,
+		"timestamp": time.Now().Unix(),
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"type": "unified_overview",
+		"data": unifiedStatus,
+		"timestamp": time.Now().Unix(),
+	})
+}
+
+// UnifiedStatusHandler 统一状态视图处理器
+func (h *BatchHandlers) UnifiedStatusHandler(w http.ResponseWriter, r *http.Request) {
+	// 检查处理器是否可用
+	if h.processor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Processor unavailable",
+			"message": "Parallel processor is not initialized",
+		})
+		return
+	}
+
+	// 获取所有状态信息
+	processorStatus := h.processor.GetProcessorStatus()
+	metrics := h.processor.GetProcessorMetrics()
+	allBatchJobs := h.processor.GetAllBatchJobs()
+	resourceStatus := h.resourceManager.GetResourceStatus()
+
+	// 按状态分类的批处理作业
+	pendingBatchJobs := h.processor.GetBatchJobsByStatus("pending")
+	runningBatchJobs := h.processor.GetBatchJobsByStatus("running")
+	completedBatchJobs := h.processor.GetBatchJobsByStatus("completed")
+	failedBatchJobs := h.processor.GetBatchJobsByStatus("failed")
+
+	// 按状态分类的管道
+	runningPipelines := h.processor.GetPipelinesByStatus("running")
+	completedPipelines := h.processor.GetPipelinesByStatus("completed")
+	failedPipelines := h.processor.GetPipelinesByStatus("failed")
+
+	// 构建统一状态视图
+	unifiedStatus := map[string]interface{}{
+		"system": map[string]interface{}{
+			"timestamp": time.Now().Unix(),
+			"uptime": time.Since(metrics.StartTime).String(),
+			"status": "running",
+		},
+		"processor": map[string]interface{}{
+			"active_pipelines":     processorStatus["active_pipelines"],
+			"queued_jobs":          processorStatus["queued_jobs"],
+			"processing_jobs":      processorStatus["processing_jobs"],
+			"total_pipelines":      metrics.TotalPipelines,
+			"running_pipelines":    metrics.RunningPipelines,
+			"completed_pipelines":  metrics.CompletedPipelines,
+			"failed_pipelines":     metrics.FailedPipelines,
+			"avg_processing_time":  metrics.AvgProcessingTime.String(),
+			"throughput":           metrics.Throughput,
+			"last_update":          metrics.LastUpdate.Unix(),
+		},
+		"batch_jobs": map[string]interface{}{
+			"total": len(allBatchJobs),
+			"pending": len(pendingBatchJobs),
+			"running": len(runningBatchJobs),
+			"completed": len(completedBatchJobs),
+			"failed": len(failedBatchJobs),
+			"jobs": allBatchJobs,
+		},
+		"pipelines": map[string]interface{}{
+			"running": runningPipelines,
+			"completed": completedPipelines,
+			"failed": failedPipelines,
+		},
+		"resources": resourceStatus,
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"type": "unified_status",
+		"data": unifiedStatus,
+		"timestamp": time.Now().Unix(),
+	})
 }
 
 // BatchConfigHandler 批处理配置处理器
 func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Request) {
+	// 检查处理器是否可用
+	if h.processor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Processor unavailable",
+			"message": "Parallel processor is not initialized",
+		})
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
-		// 获取当前批处理配置
+		// 获取当前批处理配置（从处理器状态中获取）
+		processorStatus := h.processor.GetProcessorStatus()
+		resourceStatus := map[string]interface{}{}
+		if h.resourceManager != nil {
+			resourceStatus = h.resourceManager.GetResourceStatus()
+		}
+		
 		config := map[string]interface{}{
-			"max_concurrent_jobs": 4,
-			"max_queue_size":      100,
-			"timeout_minutes":     60,
-			"retry_attempts":      3,
-			"priority_levels":     []string{"low", "normal", "high", "urgent"},
-			"auto_scaling":        true,
-			"resource_limits": map[string]interface{}{
-				"cpu_cores":    4,
-				"memory_gb":    8,
-				"disk_space_gb": 100,
-			},
+			"processor_config":     processorStatus,
+			"resource_status":      resourceStatus,
+			"comprehensive_metrics": h.processor.GetComprehensiveMetrics(),
+			"timestamp":            time.Now().Unix(),
 		}
 		writeJSON(w, http.StatusOK, config)
 
 	case http.MethodPost:
 		// 更新批处理配置
-		var newConfig map[string]interface{}
-		if err := json.NewDecoder(r.Body).Decode(&newConfig); err != nil {
+		var configUpdate struct {
+			MaxConcurrentJobs int `json:"max_concurrent_jobs"`
+			QueueSize         int `json:"queue_size"`
+			WorkerPoolSize    int `json:"worker_pool_size"`
+		}
+		
+		if err := json.NewDecoder(r.Body).Decode(&configUpdate); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"error":   "Invalid configuration",
 				"message": err.Error(),
@@ -137,10 +302,12 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 			return
 		}
 
-		// 这里应该验证和应用新配置
+		// 注意：当前processors.ParallelProcessor不支持动态配置更新
+		// 这里返回配置接收确认，实际更新需要在processors包中实现
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"message": "Configuration updated successfully",
-			"config":  newConfig,
+			"message": "Configuration update received (dynamic config update to be implemented)",
+			"config":  configUpdate,
+			"note":    "Processor restart may be required for configuration changes",
 		})
 
 	default:
@@ -153,30 +320,54 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 
 // BatchMetricsHandler 批处理指标处理器
 func (h *BatchHandlers) BatchMetricsHandler(w http.ResponseWriter, r *http.Request) {
-	metrics := map[string]interface{}{
-		"performance": map[string]interface{}{
-			"total_batches_processed": 0,
-			"total_videos_processed":  0,
-			"avg_batch_time":          "0s",
-			"avg_video_time":          "0s",
-			"success_rate":            "100%",
-			"throughput_per_hour":     0,
-		},
-		"resource_usage": map[string]interface{}{
-			"peak_cpu_usage":    "0%",
-			"peak_memory_usage": "0%",
-			"disk_usage":        "0%",
-			"network_io":        "0 MB",
-		},
-		"error_analysis": map[string]interface{}{
-			"common_errors":     []string{},
-			"error_rate":        "0%",
-			"retry_success_rate": "100%",
-		},
-		"timestamp": time.Now().Unix(),
+	// 检查处理器是否可用
+	if h.processor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Processor unavailable",
+			"message": "Parallel processor is not initialized",
+		})
+		return
 	}
 
-	// 这里应该从实际的指标存储中获取数据
+	// 从processors.ParallelProcessor获取真实指标
+	processorMetrics := h.processor.GetProcessorMetrics()
+	cpuMetrics := h.processor.GetCPUMetrics()
+	workerPoolMetrics := h.processor.GetWorkerPoolMetrics()
+	loadBalancerMetrics := h.processor.GetLoadBalancerMetrics()
+	adaptiveMetrics := h.processor.GetAdaptiveConcurrencyMetrics()
+	comprehensiveMetrics := h.processor.GetComprehensiveMetrics()
+
+	// 计算成功率
+	successRate := float64(100)
+	if processorMetrics.TotalPipelines > 0 {
+		successRate = float64(processorMetrics.CompletedPipelines) / float64(processorMetrics.TotalPipelines) * 100
+	}
+
+	metrics := map[string]interface{}{
+		"performance": map[string]interface{}{
+			"total_pipelines":      processorMetrics.TotalPipelines,
+			"completed_pipelines":  processorMetrics.CompletedPipelines,
+			"failed_pipelines":     processorMetrics.FailedPipelines,
+			"running_pipelines":    processorMetrics.RunningPipelines,
+			"avg_processing_time":  processorMetrics.AvgProcessingTime.String(),
+			"throughput":           processorMetrics.Throughput,
+			"success_rate":         strconv.FormatFloat(successRate, 'f', 2, 64) + "%",
+			"start_time":           processorMetrics.StartTime.Unix(),
+			"last_update":          processorMetrics.LastUpdate.Unix(),
+		},
+		"cpu_metrics":             cpuMetrics,
+		"worker_pool_metrics":     workerPoolMetrics,
+		"load_balancer_metrics":   loadBalancerMetrics,
+		"adaptive_metrics":        adaptiveMetrics,
+		"comprehensive_metrics":   comprehensiveMetrics,
+		"timestamp":               time.Now().Unix(),
+	}
+
+	// 如果有资源管理器，添加资源使用情况
+	if h.resourceManager != nil {
+		metrics["resource_usage"] = h.resourceManager.GetResourceStatus()
+	}
+
 	writeJSON(w, http.StatusOK, metrics)
 }
 

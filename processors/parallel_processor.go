@@ -42,11 +42,11 @@ type CPUWorker struct {
 
 // WorkItem 工作项
 type WorkItem struct {
-	ID       string
-	Type     string
-	Priority int
-	Data     interface{}
-	Callback func(interface{}) (interface{}, error)
+	ID        string
+	Type      string
+	Priority  int
+	Data      interface{}
+	Callback  func(interface{}) (interface{}, error)
 	CreatedAt time.Time
 }
 
@@ -81,11 +81,11 @@ type CPUWorkerPoolMetrics struct {
 
 // CPULoadBalancer CPU负载均衡器
 type CPULoadBalancer struct {
-	strategy       string // "round_robin", "least_loaded", "cpu_aware"
-	workerPools    []*CPUWorkerPool
-	currentIndex   int
-	mu             sync.RWMutex
-	metrics        *LoadBalancerMetrics
+	strategy     string // "round_robin", "least_loaded", "cpu_aware"
+	workerPools  []*CPUWorkerPool
+	currentIndex int
+	mu           sync.RWMutex
+	metrics      *LoadBalancerMetrics
 }
 
 // LoadBalancerMetrics 负载均衡器指标
@@ -109,6 +109,9 @@ type ParallelProcessor struct {
 	loadBalancer    *CPULoadBalancer
 	cpuMonitor      *CPUMonitor
 	adaptiveManager *AdaptiveConcurrencyManager
+	// 批处理作业管理
+	batchJobs       map[string]*BatchProcessingJob
+	batchJobsMu     sync.RWMutex
 }
 
 // CPUMonitor CPU监控器
@@ -157,13 +160,13 @@ type ParallelProcessorConfig struct {
 	MetricsUpdateInterval      time.Duration `json:"metrics_update_interval"`
 	EnableResourceOptimization bool          `json:"enable_resource_optimization"`
 	// 新增CPU优化配置
-	CPUWorkerPoolSize          int           `json:"cpu_worker_pool_size"`
-	CPUAffinityEnabled         bool          `json:"cpu_affinity_enabled"`
-	NUMAOptimizationEnabled    bool          `json:"numa_optimization_enabled"`
-	WorkStealingEnabled        bool          `json:"work_stealing_enabled"`
-	DynamicLoadBalancing       bool          `json:"dynamic_load_balancing"`
-	CPUUtilizationTarget       float64       `json:"cpu_utilization_target"`
-	AdaptiveConcurrency        bool          `json:"adaptive_concurrency"`
+	CPUWorkerPoolSize       int     `json:"cpu_worker_pool_size"`
+	CPUAffinityEnabled      bool    `json:"cpu_affinity_enabled"`
+	NUMAOptimizationEnabled bool    `json:"numa_optimization_enabled"`
+	WorkStealingEnabled     bool    `json:"work_stealing_enabled"`
+	DynamicLoadBalancing    bool    `json:"dynamic_load_balancing"`
+	CPUUtilizationTarget    float64 `json:"cpu_utilization_target"`
+	AdaptiveConcurrency     bool    `json:"adaptive_concurrency"`
 }
 
 // ProcessingPipeline 处理流水线
@@ -192,7 +195,7 @@ type ProcessingPipeline struct {
 // ProcessingStage 处理阶段
 type ProcessingStage struct {
 	Name           string                 `json:"name"`
-	Type           string                 `json:"type"` // preprocess, transcribe, summarize, store
+	Type           string                 `json:"type"`   // preprocess, transcribe, summarize, store
 	Status         string                 `json:"status"` // pending, running, completed, failed, skipped
 	StartedAt      time.Time              `json:"started_at"`
 	CompletedAt    time.Time              `json:"completed_at"`
@@ -226,12 +229,17 @@ type StageProgress struct {
 
 // BatchProcessingJob 批处理作业
 type BatchProcessingJob struct {
-	ID        string
-	Videos    []string
-	BatchSize int
-	Priority  int
-	Callback  func(*BatchResult)
-	CreatedAt time.Time
+	ID          string
+	Videos      []string
+	BatchSize   int
+	Priority    int
+	Callback    func(*BatchResult)
+	CreatedAt   time.Time
+	Status      string    // pending, running, completed, failed
+	StartedAt   time.Time
+	CompletedAt time.Time
+	PipelineIDs []string  // 关联的管道ID列表
+	mu          sync.RWMutex
 }
 
 // BatchResult 批处理结果
@@ -267,13 +275,13 @@ func NewParallelProcessor(resourceManager *core.UnifiedResourceManager) *Paralle
 		MetricsUpdateInterval:      5 * time.Minute,
 		EnableResourceOptimization: true,
 		// CPU优化配置
-		CPUWorkerPoolSize:          coreCount * 2,
-		CPUAffinityEnabled:         true,
-		NUMAOptimizationEnabled:    false, // 简化实现
-		WorkStealingEnabled:        true,
-		DynamicLoadBalancing:       true,
-		CPUUtilizationTarget:       0.8,
-		AdaptiveConcurrency:        true,
+		CPUWorkerPoolSize:       coreCount * 2,
+		CPUAffinityEnabled:      true,
+		NUMAOptimizationEnabled: false, // 简化实现
+		WorkStealingEnabled:     true,
+		DynamicLoadBalancing:    true,
+		CPUUtilizationTarget:    0.8,
+		AdaptiveConcurrency:     true,
 	}
 
 	pp := &ParallelProcessor{
@@ -282,6 +290,7 @@ func NewParallelProcessor(resourceManager *core.UnifiedResourceManager) *Paralle
 		ctx:             ctx,
 		cancel:          cancel,
 		pipelines:       make(map[string]*ProcessingPipeline),
+		batchJobs:       make(map[string]*BatchProcessingJob),
 		metrics: &ProcessorMetrics{
 			StartTime: time.Now(),
 		},
@@ -511,10 +520,10 @@ func (pp *ParallelProcessor) initializeCPUWorkerPools() {
 				ctx:        workerCtx,
 				cancel:     workerCancel,
 				metrics: &CPUWorkerPoolMetrics{
-				TasksProcessed: 0,
-				TotalDuration:  0,
-				LastActive:     time.Now(),
-			},
+					TasksProcessed: 0,
+					TotalDuration:  0,
+					LastActive:     time.Now(),
+				},
 				busy: false,
 			}
 			pool.workers[j] = worker
@@ -1110,19 +1119,19 @@ func (pp *ParallelProcessor) executePreprocessInWorker(ctx context.Context, stag
 
 	// 实际的预处理逻辑
 	log.Printf("Worker开始预处理视频: %s (Pipeline: %s)", videoPath, pipelineID)
-	
+
 	// 1. 视频文件验证
 	pp.sendProgressByID(pipelineID, stageName, 0.1, "Worker: 验证视频文件")
 	if videoPath == "" {
 		return nil, fmt.Errorf("视频路径为空")
 	}
-	
+
 	// 2. 音频提取
 	pp.sendProgressByID(pipelineID, stageName, 0.3, "Worker: 提取音频轨道")
 	audioFile := fmt.Sprintf("temp/%s_audio.wav", jobID)
 	// 这里应该调用FFmpeg进行音频提取
 	time.Sleep(100 * time.Millisecond) // 模拟音频提取时间
-	
+
 	// 检查取消
 	select {
 	case <-ctx.Done():
@@ -1135,7 +1144,7 @@ func (pp *ParallelProcessor) executePreprocessInWorker(ctx context.Context, stag
 	framesDir := fmt.Sprintf("temp/%s_frames", jobID)
 	// 这里应该调用FFmpeg进行帧提取
 	time.Sleep(150 * time.Millisecond) // 模拟帧提取时间
-	
+
 	// 4. 元数据处理
 	pp.sendProgressByID(pipelineID, stageName, 0.9, "Worker: 处理视频元数据")
 	duration := 180.0 // 应该从实际视频文件获取
@@ -1143,13 +1152,13 @@ func (pp *ParallelProcessor) executePreprocessInWorker(ctx context.Context, stag
 	time.Sleep(50 * time.Millisecond)
 
 	result := map[string]interface{}{
-		"audio_file":    audioFile,
-		"frames_dir":    framesDir,
-		"duration":      duration,
-		"frame_count":   frameCount,
-		"video_path":    videoPath,
-		"processed_by":  "worker_pool",
-		"timestamp":     time.Now(),
+		"audio_file":   audioFile,
+		"frames_dir":   framesDir,
+		"duration":     duration,
+		"frame_count":  frameCount,
+		"video_path":   videoPath,
+		"processed_by": "worker_pool",
+		"timestamp":    time.Now(),
 	}
 
 	log.Printf("Worker预处理完成: %s", jobID)
@@ -1255,7 +1264,7 @@ func (pp *ParallelProcessor) executeStoreInWorker(ctx context.Context, stageData
 	if summaryData == nil {
 		return nil, fmt.Errorf("摘要数据为空")
 	}
-	
+
 	// 提取需要存储的数据
 	summary, _ := summaryData["summary"].(string)
 	keyPoints, _ := summaryData["key_points"].([]string)
@@ -1299,9 +1308,9 @@ func (pp *ParallelProcessor) executeStoreInWorker(ctx context.Context, stageData
 		"search_index_id": indexID,
 		"data_valid":      isValid,
 		"stored_items": map[string]interface{}{
-			"summary_length":    len(summary),
-			"key_points_count":  len(keyPoints),
-			"embeddings_dim":    len(embeddings),
+			"summary_length":   len(summary),
+			"key_points_count": len(keyPoints),
+			"embeddings_dim":   len(embeddings),
 		},
 		"processed_by": "worker_pool",
 		"timestamp":    time.Now(),
@@ -1337,7 +1346,7 @@ func (pp *ParallelProcessor) executePreprocessStage(ctx context.Context, pipelin
 
 	// 设置输出
 	stage.Result = map[string]interface{}{
-		"audio_file":  fmt.Sprintf("%s.wav", pipeline.JobID),
+		"audio_file": fmt.Sprintf("%s.wav", pipeline.JobID),
 		"frames_dir": fmt.Sprintf("%s_frames", pipeline.JobID),
 		"duration":   180.0,
 	}
@@ -1373,8 +1382,8 @@ func (pp *ParallelProcessor) executeTranscribeStage(ctx context.Context, pipelin
 	// 设置输出
 	stage.Result = map[string]interface{}{
 		"transcript_file": fmt.Sprintf("%s_transcript.json", pipeline.JobID),
-		"segments_count": 10,
-		"transcript":     "This is a sample transcript",
+		"segments_count":  10,
+		"transcript":      "This is a sample transcript",
 		"segments": []map[string]interface{}{
 			{"start": 0.0, "end": 5.0, "text": "Hello world"},
 			{"start": 5.0, "end": 10.0, "text": "This is a test"},
@@ -1409,7 +1418,7 @@ func (pp *ParallelProcessor) executeSummarizeStage(ctx context.Context, pipeline
 	// 设置输出
 	stage.Result = map[string]interface{}{
 		"summary_file": fmt.Sprintf("%s_summary.json", pipeline.JobID),
-		"items_count": 10,
+		"items_count":  10,
 		"summaries": []map[string]interface{}{
 			{"start": 0.0, "end": 5.0, "summary": "Introduction"},
 			{"start": 5.0, "end": 10.0, "summary": "Main content"},
@@ -1444,9 +1453,9 @@ func (pp *ParallelProcessor) executeStoreStage(ctx context.Context, pipeline *Pr
 	// 设置输出
 	stage.Result = map[string]interface{}{
 		"stored_segments": 10,
-		"vector_count":   10,
-		"stored_vectors": 50,
-		"index_updated":  true,
+		"vector_count":    10,
+		"stored_vectors":  50,
+		"index_updated":   true,
 	}
 
 	stage.Output = stage.Result
@@ -1563,13 +1572,20 @@ func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callbac
 	}
 
 	batchJob := &BatchProcessingJob{
-		ID:        fmt.Sprintf("batch-%d", time.Now().UnixNano()),
-		Videos:    videos,
-		BatchSize: pp.config.BatchSize,
-		Priority:  priority,
-		Callback:  callback,
-		CreatedAt: time.Now(),
+		ID:          fmt.Sprintf("batch-%d", time.Now().UnixNano()),
+		Videos:      videos,
+		BatchSize:   pp.config.BatchSize,
+		Priority:    priority,
+		Callback:    callback,
+		CreatedAt:   time.Now(),
+		Status:      "pending",
+		PipelineIDs: make([]string, 0),
 	}
+
+	// 注册批处理作业
+	pp.batchJobsMu.Lock()
+	pp.batchJobs[batchJob.ID] = batchJob
+	pp.batchJobsMu.Unlock()
 
 	go pp.executeBatch(batchJob)
 	return nil
@@ -1578,6 +1594,13 @@ func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callbac
 // executeBatch 执行批处理
 func (pp *ParallelProcessor) executeBatch(batchJob *BatchProcessingJob) {
 	start := time.Now()
+	
+	// 更新批处理作业状态
+	batchJob.mu.Lock()
+	batchJob.Status = "running"
+	batchJob.StartedAt = start
+	batchJob.mu.Unlock()
+	
 	result := &BatchResult{
 		JobID:       batchJob.ID,
 		TotalVideos: len(batchJob.Videos),
@@ -1595,10 +1618,21 @@ func (pp *ParallelProcessor) executeBatch(batchJob *BatchProcessingJob) {
 		}
 
 		batch := batchJob.Videos[i:end]
-		pp.processBatchChunk(batch, batchJob.Priority, result)
+		pp.processBatchChunk(batch, batchJob.Priority, result, batchJob)
 	}
 
 	result.Duration = time.Since(start)
+	
+	// 更新批处理作业完成状态
+	batchJob.mu.Lock()
+	if result.Failed > 0 {
+		batchJob.Status = "failed"
+	} else {
+		batchJob.Status = "completed"
+	}
+	batchJob.CompletedAt = time.Now()
+	batchJob.mu.Unlock()
+	
 	log.Printf("Batch job %s completed: %d/%d successful", batchJob.ID, result.Completed, result.TotalVideos)
 
 	if batchJob.Callback != nil {
@@ -1607,7 +1641,7 @@ func (pp *ParallelProcessor) executeBatch(batchJob *BatchProcessingJob) {
 }
 
 // processBatchChunk 处理批次块
-func (pp *ParallelProcessor) processBatchChunk(videos []string, priority int, result *BatchResult) {
+func (pp *ParallelProcessor) processBatchChunk(videos []string, priority int, result *BatchResult, batchJob *BatchProcessingJob) {
 	var wg sync.WaitGroup
 	mu := sync.Mutex{}
 
@@ -1625,6 +1659,11 @@ func (pp *ParallelProcessor) processBatchChunk(videos []string, priority int, re
 				mu.Unlock()
 				return
 			}
+
+			// 将管道ID添加到批处理作业中
+			batchJob.mu.Lock()
+			batchJob.PipelineIDs = append(batchJob.PipelineIDs, pipeline.ID)
+			batchJob.mu.Unlock()
 
 			// 等待流水线完成
 			for {
@@ -1667,6 +1706,67 @@ func (pp *ParallelProcessor) GetPipelineStatus(pipelineID string) map[string]int
 		return map[string]interface{}{"error": "pipeline not found"}
 	}
 
+	return pp.formatPipelineStatus(pipeline)
+}
+
+// GetPipelineStatusByJobID 根据JobID获取管道状态
+func (pp *ParallelProcessor) GetPipelineStatusByJobID(jobID string) map[string]interface{} {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+
+	for _, pipeline := range pp.pipelines {
+		if pipeline.JobID == jobID {
+			return pp.formatPipelineStatus(pipeline)
+		}
+	}
+
+	return map[string]interface{}{"error": "pipeline not found for job ID: " + jobID}
+}
+
+// GetMultiplePipelineStatus 批量获取管道状态
+func (pp *ParallelProcessor) GetMultiplePipelineStatus(pipelineIDs []string) map[string]interface{} {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+
+	results := make(map[string]interface{})
+	for _, pipelineID := range pipelineIDs {
+		if pipeline, exists := pp.pipelines[pipelineID]; exists {
+			results[pipelineID] = pp.formatPipelineStatus(pipeline)
+		} else {
+			results[pipelineID] = map[string]interface{}{"error": "pipeline not found"}
+		}
+	}
+
+	return map[string]interface{}{
+		"pipelines": results,
+		"total":     len(pipelineIDs),
+		"found":     len(results),
+		"timestamp": time.Now().Unix(),
+	}
+}
+
+// GetPipelinesByStatus 根据状态获取管道列表
+func (pp *ParallelProcessor) GetPipelinesByStatus(status string) map[string]interface{} {
+	pp.mu.RLock()
+	defer pp.mu.RUnlock()
+
+	var matchingPipelines []map[string]interface{}
+	for _, pipeline := range pp.pipelines {
+		if pipeline.Status == status {
+			matchingPipelines = append(matchingPipelines, pp.formatPipelineStatus(pipeline))
+		}
+	}
+
+	return map[string]interface{}{
+		"status":    status,
+		"pipelines": matchingPipelines,
+		"count":     len(matchingPipelines),
+		"timestamp": time.Now().Unix(),
+	}
+}
+
+// formatPipelineStatus 格式化管道状态信息
+func (pp *ParallelProcessor) formatPipelineStatus(pipeline *ProcessingPipeline) map[string]interface{} {
 	pipeline.mu.RLock()
 	defer pipeline.mu.RUnlock()
 
@@ -1678,10 +1778,23 @@ func (pp *ParallelProcessor) GetPipelineStatus(pipelineID string) map[string]int
 			"status":       stage.Status,
 			"started_at":   stage.StartedAt,
 			"completed_at": stage.CompletedAt,
+			"duration":     stage.Duration,
 			"retry_count":  stage.RetryCount,
 			"error":        stage.Error,
 			"result":       stage.Result,
 		}
+	}
+
+	// 计算进度百分比
+	progress := float64(0)
+	if len(pipeline.Stages) > 0 {
+		completedStages := 0
+		for _, stage := range pipeline.Stages {
+			if stage.Status == "completed" {
+				completedStages++
+			}
+		}
+		progress = float64(completedStages) / float64(len(pipeline.Stages)) * 100
 	}
 
 	return map[string]interface{}{
@@ -1690,6 +1803,7 @@ func (pp *ParallelProcessor) GetPipelineStatus(pipelineID string) map[string]int
 		"job_id":        pipeline.JobID,
 		"status":        pipeline.Status,
 		"current_stage": pipeline.CurrentStage,
+		"progress":      progress,
 		"started_at":    pipeline.StartedAt,
 		"completed_at":  pipeline.CompletedAt,
 		"created_at":    pipeline.CreatedAt,
@@ -1699,6 +1813,7 @@ func (pp *ParallelProcessor) GetPipelineStatus(pipelineID string) map[string]int
 		"stages":        stages,
 		"results":       pipeline.Results,
 		"error":         pipeline.Error,
+		"timestamp":     time.Now().Unix(),
 	}
 }
 
@@ -1714,25 +1829,25 @@ func (pp *ParallelProcessor) GetProcessorStatus() map[string]interface{} {
 		pipeline.mu.RLock()
 		statusCount[pipeline.Status]++
 		pipelineDetails = append(pipelineDetails, map[string]interface{}{
-			"id":          pipeline.ID,
-			"video_path":  pipeline.VideoPath,
-			"status":      pipeline.Status,
-			"priority":    pipeline.Priority,
-			"started_at":  pipeline.StartedAt,
-			"created_at":  pipeline.CreatedAt,
+			"id":         pipeline.ID,
+			"video_path": pipeline.VideoPath,
+			"status":     pipeline.Status,
+			"priority":   pipeline.Priority,
+			"started_at": pipeline.StartedAt,
+			"created_at": pipeline.CreatedAt,
 		})
 		pipeline.mu.RUnlock()
 	}
 
 	return map[string]interface{}{
-		"total_pipelines":      len(pp.pipelines),
-		"status_count":         statusCount,
-		"pipeline_details":     pipelineDetails,
-		"config":               pp.config,
-		"max_concurrent":       pp.config.MaxConcurrentVideos,
-		"stage_parallelism":    pp.config.EnableStageParallelism,
-		"batch_processing":     pp.config.EnableBatchProcessing,
-		"metrics":              pp.metrics,
+		"total_pipelines":   len(pp.pipelines),
+		"status_count":      statusCount,
+		"pipeline_details":  pipelineDetails,
+		"config":            pp.config,
+		"max_concurrent":    pp.config.MaxConcurrentVideos,
+		"stage_parallelism": pp.config.EnableStageParallelism,
+		"batch_processing":  pp.config.EnableBatchProcessing,
+		"metrics":           pp.metrics,
 	}
 }
 
@@ -1783,10 +1898,10 @@ func (pp *ParallelProcessor) GetCPUMetrics() map[string]interface{} {
 	avgUsage := totalUsage / float64(len(pp.cpuMonitor.cpuUsage))
 
 	return map[string]interface{}{
-		"core_count":     pp.cpuMonitor.coreCount,
+		"core_count":      pp.cpuMonitor.coreCount,
 		"avg_utilization": avgUsage,
-		"per_core_usage": pp.cpuMonitor.cpuUsage,
-		"samples":        pp.cpuMonitor.samples,
+		"per_core_usage":  pp.cpuMonitor.cpuUsage,
+		"samples":         pp.cpuMonitor.samples,
 	}
 }
 
@@ -1800,7 +1915,7 @@ func (pp *ParallelProcessor) GetWorkerPoolMetrics() []map[string]interface{} {
 
 	for i, pool := range pp.cpuWorkerPools {
 		pool.metrics.mu.RLock()
-		
+
 		// 计算吞吐量
 		throughput := 0.0
 		if pool.metrics.AverageLatency > 0 {
@@ -1869,21 +1984,132 @@ func (pp *ParallelProcessor) GetAdaptiveConcurrencyMetrics() map[string]interfac
 
 	return map[string]interface{}{
 		"current_concurrency": pp.adaptiveManager.currentConcurrency,
-		"target_utilization": pp.adaptiveManager.targetUtilization,
-		"adjustment_factor":  pp.adaptiveManager.adjustmentFactor,
-		"last_adjustment":    pp.adaptiveManager.lastAdjustment,
+		"target_utilization":  pp.adaptiveManager.targetUtilization,
+		"adjustment_factor":   pp.adaptiveManager.adjustmentFactor,
+		"last_adjustment":     pp.adaptiveManager.lastAdjustment,
 	}
 }
 
 // GetComprehensiveMetrics 获取综合性能指标
 func (pp *ParallelProcessor) GetComprehensiveMetrics() map[string]interface{} {
 	return map[string]interface{}{
-		"processor":           pp.GetProcessorMetrics(),
-		"cpu":                pp.GetCPUMetrics(),
-		"worker_pools":       pp.GetWorkerPoolMetrics(),
-		"load_balancer":      pp.GetLoadBalancerMetrics(),
+		"processor":            pp.GetProcessorMetrics(),
+		"cpu":                  pp.GetCPUMetrics(),
+		"worker_pools":         pp.GetWorkerPoolMetrics(),
+		"load_balancer":        pp.GetLoadBalancerMetrics(),
 		"adaptive_concurrency": pp.GetAdaptiveConcurrencyMetrics(),
-		"config":             pp.config,
+		"config":               pp.config,
+	}
+}
+
+// GetBatchJobStatus 获取批处理作业状态
+func (pp *ParallelProcessor) GetBatchJobStatus(jobID string) map[string]interface{} {
+	pp.batchJobsMu.RLock()
+	batchJob, exists := pp.batchJobs[jobID]
+	pp.batchJobsMu.RUnlock()
+	
+	if !exists {
+		return map[string]interface{}{
+			"error": "batch job not found",
+			"job_id": jobID,
+		}
+	}
+	
+	batchJob.mu.RLock()
+	defer batchJob.mu.RUnlock()
+	
+	// 获取关联管道的状态
+	pipelineStatuses := make(map[string]interface{})
+	for _, pipelineID := range batchJob.PipelineIDs {
+		pipelineStatuses[pipelineID] = pp.GetPipelineStatus(pipelineID)
+	}
+	
+	// 计算进度
+	var completedPipelines, failedPipelines, runningPipelines int
+	for _, status := range pipelineStatuses {
+		if statusMap, ok := status.(map[string]interface{}); ok {
+			if pipelineStatus, ok := statusMap["status"].(string); ok {
+				switch pipelineStatus {
+				case "completed":
+					completedPipelines++
+				case "failed":
+					failedPipelines++
+				case "running":
+					runningPipelines++
+				}
+			}
+		}
+	}
+	
+	totalPipelines := len(batchJob.PipelineIDs)
+	progress := 0.0
+	if totalPipelines > 0 {
+		progress = float64(completedPipelines) / float64(totalPipelines)
+	}
+	
+	duration := time.Duration(0)
+	if !batchJob.StartedAt.IsZero() {
+		if !batchJob.CompletedAt.IsZero() {
+			duration = batchJob.CompletedAt.Sub(batchJob.StartedAt)
+		} else {
+			duration = time.Since(batchJob.StartedAt)
+		}
+	}
+	
+	return map[string]interface{}{
+		"job_id":             batchJob.ID,
+		"status":             batchJob.Status,
+		"total_videos":       len(batchJob.Videos),
+		"batch_size":         batchJob.BatchSize,
+		"priority":           batchJob.Priority,
+		"created_at":         batchJob.CreatedAt,
+		"started_at":         batchJob.StartedAt,
+		"completed_at":       batchJob.CompletedAt,
+		"duration":           duration,
+		"progress":           progress,
+		"total_pipelines":    totalPipelines,
+		"completed_pipelines": completedPipelines,
+		"failed_pipelines":   failedPipelines,
+		"running_pipelines":  runningPipelines,
+		"pipeline_ids":       batchJob.PipelineIDs,
+		"pipeline_statuses":  pipelineStatuses,
+	}
+}
+
+// GetAllBatchJobs 获取所有批处理作业状态
+func (pp *ParallelProcessor) GetAllBatchJobs() map[string]interface{} {
+	pp.batchJobsMu.RLock()
+	defer pp.batchJobsMu.RUnlock()
+	
+	jobs := make(map[string]interface{})
+	for jobID := range pp.batchJobs {
+		jobs[jobID] = pp.GetBatchJobStatus(jobID)
+	}
+	
+	return map[string]interface{}{
+		"total_jobs": len(pp.batchJobs),
+		"jobs":       jobs,
+	}
+}
+
+// GetBatchJobsByStatus 根据状态获取批处理作业
+func (pp *ParallelProcessor) GetBatchJobsByStatus(status string) map[string]interface{} {
+	pp.batchJobsMu.RLock()
+	defer pp.batchJobsMu.RUnlock()
+	
+	matchingJobs := make(map[string]interface{})
+	for jobID, batchJob := range pp.batchJobs {
+		batchJob.mu.RLock()
+		if batchJob.Status == status {
+			matchingJobs[jobID] = pp.GetBatchJobStatus(jobID)
+		}
+		batchJob.mu.RUnlock()
+	}
+	
+	return map[string]interface{}{
+		"status":     status,
+		"total_jobs": len(matchingJobs),
+		"jobs":       matchingJobs,
 	}
 }
 
