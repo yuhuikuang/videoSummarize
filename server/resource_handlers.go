@@ -109,3 +109,41 @@ func (h *ResourceHandlers) ProcessorStatusHandler(w http.ResponseWriter, r *http
 
 	writeJSON(w, http.StatusOK, processorStatus)
 }
+
+// GPUStatusHandler GPU状态处理器
+func (h *ResourceHandlers) GPUStatusHandler(w http.ResponseWriter, r *http.Request) {
+	if h.resourceManager == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Resource manager not available",
+			"status":  "unavailable",
+			"message": "Unified resource manager is not initialized",
+		})
+		return
+	}
+
+	// 检查GPU是否可用
+	gpuAvailable := h.resourceManager.IsGPUAvailable()
+	if !gpuAvailable {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"gpu_available": false,
+			"status":        "unavailable",
+			"message":       "GPU resources are not available on this system",
+			"timestamp":     time.Now().Unix(),
+		})
+		return
+	}
+
+	// 获取GPU状态信息
+	gpuStatus := h.resourceManager.GetGPUStatus()
+	gpuMetrics := h.resourceManager.GetGPUMetrics()
+
+	response := map[string]interface{}{
+		"gpu_available": true,
+		"status":        "active",
+		"gpu_status":    gpuStatus,
+		"gpu_metrics":   gpuMetrics,
+		"timestamp":     time.Now().Unix(),
+	}
+
+	writeJSON(w, http.StatusOK, response)
+}

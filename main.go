@@ -76,6 +76,7 @@ func main() {
 	http.HandleFunc("/resources", resourceHandlers.ResourceHandler)
 	http.HandleFunc("/enhanced-resources", resourceHandlers.EnhancedResourceHandler)
 	http.HandleFunc("/processor-status", resourceHandlers.ProcessorStatusHandler)
+	http.HandleFunc("/gpu-status", resourceHandlers.GPUStatusHandler)
 
 	// 批处理路由
 	http.HandleFunc("/process-batch", batchHandlers.ProcessBatchHandler)

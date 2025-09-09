@@ -15,13 +15,13 @@ import (
 )
 
 // UnifiedResourceManager 统一的资源管理器
-// 合并了原ResourceManager和EnhancedResourceManager的功能
+// UnifiedResourceManager 统一资源管理器
 type UnifiedResourceManager struct {
 	// 上下文管理
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// 优化后的锁机制 - 减少锁数量，提高并发性能
+	// 锁机制：分层锁设计避免死锁
 	stateMu    sync.RWMutex // 状态锁：管理系统状态和配置
 	jobsMu     sync.RWMutex // 作业锁：管理作业相关操作
 	resourceMu sync.RWMutex // 资源锁：管理资源分配和监控
@@ -43,12 +43,15 @@ type UnifiedResourceManager struct {
 	workQueue         chan *JobTask
 	resultQueue       chan *JobResult
 
-	// 工作池管理
+	// 工作器管理
 	workers    map[string]*EnhancedWorker
 	maxWorkers int
 
-	// 资源池
+	// 资源池和调度
 	resourcePool *UnifiedResourcePool
+
+	// GPU资源调度器
+	gpuScheduler *GPUResourceScheduler
 
 	// 调度和负载均衡
 	scheduler    *UnifiedJobScheduler
@@ -210,6 +213,15 @@ func NewUnifiedResourceManager() *UnifiedResourceManager {
 func (urm *UnifiedResourceManager) initializeComponents() {
 	// 初始化资源检测
 	urm.initializeResources()
+
+	// 初始化GPU加速器和资源调度器
+	if urm.gpuAvailable {
+		gpuAccelerator := NewGPUAccelerator()
+		urm.gpuScheduler = NewGPUResourceScheduler(gpuAccelerator)
+		log.Println("GPU资源调度器初始化完成")
+	} else {
+		log.Println("GPU不可用，跳过GPU资源调度器初始化")
+	}
 
 	// 初始化资源池
 	urm.resourcePool = &UnifiedResourcePool{
@@ -997,6 +1009,25 @@ func (urm *UnifiedResourceManager) AllocateResources(jobID, jobType, priority st
 		}(),
 	}
 
+	// 申请GPU资源（如果需要）
+	if urm.gpuScheduler != nil && jobResource.GPUMemoryMB > 0 {
+		req := &GPUResourceRequest{
+			jobID:            jobID,
+			stageID:          jobType,
+			stageType:        jobType,
+			tokensRequired:   1,
+			memoryRequired:   jobResource.GPUMemoryMB,
+			expectedDuration: 30 * time.Minute,
+			priority:         1,
+			requestTime:      time.Now(),
+			timeout:          5 * time.Minute,
+		}
+		err := urm.gpuScheduler.RequestGPUResources(req)
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate GPU resource: %v", err)
+		}
+	}
+
 	urm.activeJobs[jobID] = jobResource
 	log.Printf("Allocated resources for job %s (type: %s)", jobID, jobType)
 	return jobResource, nil
@@ -1008,6 +1039,11 @@ func (urm *UnifiedResourceManager) ReleaseResources(jobID string) {
 	defer urm.jobsMu.Unlock()
 
 	if job, exists := urm.activeJobs[jobID]; exists {
+		// 释放GPU资源
+		if urm.gpuScheduler != nil && job.GPUMemoryMB > 0 {
+			urm.gpuScheduler.ReleaseGPUResources(jobID, job.Type)
+		}
+		
 		delete(urm.activeJobs, jobID)
 		log.Printf("Released resources for job %s (type: %s)", jobID, job.Type)
 	}
@@ -1172,6 +1208,11 @@ func (urm *UnifiedResourceManager) Shutdown() {
 	}
 	urm.jobsMu.Unlock()
 
+	// 关闭GPU调度器
+	if urm.gpuScheduler != nil {
+		urm.gpuScheduler.Shutdown()
+	}
+
 	// 关闭通道
 	close(urm.jobQueue)
 	close(urm.workQueue)
@@ -1200,4 +1241,60 @@ func (urm *UnifiedResourceManager) AllocateResourcesEnhanced(jobID, jobType, pri
 // GetEnhancedResourceManager 获取增强资源管理器（兼容原接口）
 func GetEnhancedResourceManager() *UnifiedResourceManager {
 	return GetUnifiedResourceManager()
+}
+
+// GPU资源管理方法
+
+// AllocateGPUResource 申请GPU资源
+func (urm *UnifiedResourceManager) AllocateGPUResource(jobID, stageType string, memoryMB int64) error {
+	if urm.gpuScheduler == nil {
+		return fmt.Errorf("GPU scheduler not available")
+	}
+	req := &GPUResourceRequest{
+		jobID:            jobID,
+		stageID:          stageType,
+		stageType:        stageType,
+		tokensRequired:   1,
+		memoryRequired:   memoryMB,
+		expectedDuration: 30 * time.Minute,
+		priority:         1,
+		requestTime:      time.Now(),
+		timeout:          5 * time.Minute,
+	}
+	return urm.gpuScheduler.RequestGPUResources(req)
+}
+
+// ReleaseGPUResource 释放GPU资源
+func (urm *UnifiedResourceManager) ReleaseGPUResource(jobID, stageID string) error {
+	if urm.gpuScheduler == nil {
+		return fmt.Errorf("GPU scheduler not available")
+	}
+	return urm.gpuScheduler.ReleaseGPUResources(jobID, stageID)
+}
+
+// GetGPUStatus 获取GPU状态
+func (urm *UnifiedResourceManager) GetGPUStatus() map[string]interface{} {
+	if urm.gpuScheduler == nil {
+		return map[string]interface{}{
+			"available": false,
+			"message":   "GPU scheduler not initialized",
+		}
+	}
+	return urm.gpuScheduler.GetSchedulerStatus()
+}
+
+// GetGPUMetrics 获取GPU指标
+func (urm *UnifiedResourceManager) GetGPUMetrics() map[string]interface{} {
+	if urm.gpuScheduler == nil {
+		return map[string]interface{}{
+			"available": false,
+			"message":   "GPU scheduler not initialized",
+		}
+	}
+	return urm.gpuScheduler.GetSchedulerStatus()
+}
+
+// IsGPUAvailable 检查GPU是否可用
+func (urm *UnifiedResourceManager) IsGPUAvailable() bool {
+	return urm.gpuScheduler != nil && urm.gpuAvailable
 }
