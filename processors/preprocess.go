@@ -20,37 +20,11 @@ import (
 	"videoSummarize/utils"
 )
 
-// loadConfig 加载配置
-func loadConfig() (*config.Config, error) {
-	return config.LoadConfig()
-}
-
-// detectGPUType 检测GPU类型
-func detectGPUType() string {
-	return utils.DetectGPUType()
-}
-
-// getHardwareAccelArgs 获取硬件加速参数
-func getHardwareAccelArgs(gpuType string) []string {
-	switch gpuType {
-	case "nvidia":
-		return []string{"-hwaccel", "cuda"}
-	case "amd":
-		return []string{"-hwaccel", "opencl"}
-	case "intel":
-		return []string{"-hwaccel", "qsv"}
-	default:
-		return []string{}
-	}
-}
-
-// runFFmpeg 运行FFmpeg命令
-func runFFmpeg(args []string) error {
-	cmd := exec.Command("ffmpeg", args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
-}
+// 工具函数已移至utils包，保持代码统一性
+// loadConfig - 使用 config.LoadConfig()
+// detectGPUType - 使用 utils.DetectGPUType()
+// getHardwareAccelArgs - 使用 utils.GetHardwareAccelArgs()
+// runFFmpeg - 使用 utils.RunFFmpeg()
 
 // PreprocessHandler 导出的处理器函数
 func PreprocessHandler(w http.ResponseWriter, r *http.Request) {
@@ -98,12 +72,12 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 		bodyBytes, _ := json.Marshal(body)
 		r.Body = io.NopCloser(strings.NewReader(string(bodyBytes)))
 	}
-	
+
 	// 如果没有提供job_id，则生成新的
 	if jobID == "" {
 		jobID = newID()
 	}
-	
+
 	jobDir := filepath.Join(core.DataRoot(), jobID)
 	framesDir := filepath.Join(jobDir, "frames")
 
@@ -132,7 +106,9 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 			return
 		}
 	} else {
-		var body struct{ VideoPath string `json:"video_path"` }
+		var body struct {
+			VideoPath string `json:"video_path"`
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 			return
@@ -158,7 +134,7 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 		log.Printf("[%s] Extracting audio...", jobID)
 		rm.UpdateJobStep(jobID, "audio_extraction")
 	}
-	
+
 	audioPath := filepath.Join(jobDir, "audio.wav")
 	if enableAudioPreprocessing {
 		if err := extractAudioWithPreprocessing(inputPath, audioPath, true); err != nil {
@@ -225,10 +201,14 @@ func saveUploadedVideo(r *http.Request, jobDir string) (string, error) {
 
 func copyFile(src, dst string) error {
 	s, err := os.Open(src)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer s.Close()
 	d, err := os.Create(dst)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer d.Close()
 	_, err = io.Copy(d, s)
 	return err
@@ -236,22 +216,22 @@ func copyFile(src, dst string) error {
 
 func extractAudio(inputPath, audioOut string) error {
 	args := []string{"-y"}
-	
+
 	// Add GPU acceleration if enabled
-	config, err := loadConfig()
+	config, err := config.LoadConfig()
 	if err == nil && config.GPUAcceleration {
 		gpuType := config.GPUType
 		if gpuType == "auto" {
-			gpuType = detectGPUType()
+			gpuType = utils.DetectGPUType()
 		}
 		if gpuType != "cpu" {
-			hwArgs := getHardwareAccelArgs(gpuType)
+			hwArgs := utils.GetHardwareAccelArgs(gpuType)
 			args = append(args, hwArgs...)
 		}
 	}
-	
+
 	args = append(args, "-i", inputPath, "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", audioOut)
-	return runFFmpeg(args)
+	return utils.RunFFmpeg(args)
 }
 
 // extractAudioWithPreprocessing 提取音频并进行预处理
@@ -260,42 +240,42 @@ func extractAudioWithPreprocessing(inputPath, audioOut string, enablePreprocessi
 	if err := extractAudio(inputPath, audioOut); err != nil {
 		return fmt.Errorf("音频提取失败: %v", err)
 	}
-	
+
 	// 如果启用预处理，则进行音频预处理
 	if enablePreprocessing {
 		log.Printf("开始音频预处理流程...")
-		
+
 		// 创建音频预处理器
 		preprocessor, err := NewAudioPreprocessor()
 		if err != nil {
 			log.Printf("创建音频预处理器失败: %v", err)
 			return nil // 不返回错误，使用原始音频
 		}
-		
+
 		// 获取输出目录
 		outputDir := filepath.Dir(audioOut)
-		
+
 		// 执行音频预处理
 		result, err := preprocessor.ProcessAudioWithRetry(audioOut, outputDir, 3)
 		if err != nil {
 			log.Printf("音频预处理失败，使用原始音频: %v", err)
 			return nil // 不返回错误，使用原始音频
 		}
-		
+
 		// 复制最终处理后的音频文件到目标位置
 		if err := copyFile(result.EnhancedPath, audioOut); err != nil {
 			log.Printf("复制预处理音频文件失败: %v", err)
 			return nil // 不返回错误，使用原始音频
 		}
-		
+
 		// 保留预处理文件用于验证，添加后缀以区分
 		denoisedBackup := filepath.Join(filepath.Dir(audioOut), "audio_denoised.wav")
 		enhancedBackup := filepath.Join(filepath.Dir(audioOut), "audio_enhanced.wav")
-		
+
 		log.Printf("保存音频预处理备份文件...")
 		log.Printf("降噪文件: %s -> %s", result.DenoisedPath, denoisedBackup)
 		log.Printf("增强文件: %s -> %s", result.EnhancedPath, enhancedBackup)
-		
+
 		// 检查源文件是否存在
 		if _, err := os.Stat(result.DenoisedPath); err != nil {
 			log.Printf("降噪文件不存在: %v", err)
@@ -307,7 +287,7 @@ func extractAudioWithPreprocessing(inputPath, audioOut string, enablePreprocessi
 				log.Printf("降噪音频备份保存成功: %s", denoisedBackup)
 			}
 		}
-		
+
 		if _, err := os.Stat(result.EnhancedPath); err != nil {
 			log.Printf("增强文件不存在: %v", err)
 		} else {
@@ -318,15 +298,15 @@ func extractAudioWithPreprocessing(inputPath, audioOut string, enablePreprocessi
 				log.Printf("增强音频备份保存成功: %s", enhancedBackup)
 			}
 		}
-		
+
 		// 清理临时文件（但保留备份）
 		// 注意：不要删除源文件，因为它们可能就是我们需要的备份文件
 		// os.Remove(result.DenoisedPath)
 		// os.Remove(result.EnhancedPath)
-		
+
 		log.Printf("音频预处理完成，处理时间: %v", result.ProcessingTime)
 	}
-	
+
 	return nil
 }
 
@@ -334,22 +314,30 @@ func extractFramesAtInterval(inputPath, framesDir string, intervalSec int) error
 	pattern := filepath.Join(framesDir, "%05d.jpg")
 	// For frame extraction, use CPU processing as GPU acceleration may cause compatibility issues
 	args := []string{"-y", "-i", inputPath, "-vf", fmt.Sprintf("fps=1/%d", intervalSec), pattern}
-	return runFFmpeg(args)
+	return utils.RunFFmpeg(args)
 }
 
 func enumerateFramesWithTimestamps(framesDir string, intervalSec int) ([]core.Frame, error) {
 	d, err := os.ReadDir(framesDir)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	frames := make([]core.Frame, 0, len(d))
 	for _, e := range d {
-		if e.IsDir() { continue }
+		if e.IsDir() {
+			continue
+		}
 		name := e.Name()
 		// parse index from name like 00001.jpg
 		base := name
-		if ext := filepath.Ext(base); ext != "" { base = base[:len(base)-len(ext)] }
+		if ext := filepath.Ext(base); ext != "" {
+			base = base[:len(base)-len(ext)]
+		}
 		i, err := strconv.Atoi(base)
-		if err != nil { continue }
-		ts := float64((i-1)*intervalSec)
+		if err != nil {
+			continue
+		}
+		ts := float64((i - 1) * intervalSec)
 		frames = append(frames, core.Frame{TimestampSec: ts, Path: filepath.Join(framesDir, name)})
 	}
 	return frames, nil
@@ -409,13 +397,13 @@ type VideoInfo struct {
 
 // ProcessingCheckpoint tracks processing state
 type ProcessingCheckpoint struct {
-	JobID        string    `json:"job_id"`
-	StartTime    time.Time `json:"start_time"`
-	CurrentStep  string    `json:"current_step"`
-	CompletedSteps []string `json:"completed_steps"`
-	VideoInfo    *VideoInfo `json:"video_info,omitempty"`
-	Errors       []string  `json:"errors,omitempty"`
-	LastUpdate   time.Time `json:"last_update"`
+	JobID          string     `json:"job_id"`
+	StartTime      time.Time  `json:"start_time"`
+	CurrentStep    string     `json:"current_step"`
+	CompletedSteps []string   `json:"completed_steps"`
+	VideoInfo      *VideoInfo `json:"video_info,omitempty"`
+	Errors         []string   `json:"errors,omitempty"`
+	LastUpdate     time.Time  `json:"last_update"`
 }
 
 // validateVideoFile checks if video file is valid and extracts basic info
@@ -431,9 +419,9 @@ func validateVideoFile(path string) (*VideoInfo, error) {
 			Duration string `json:"duration"`
 		} `json:"format"`
 		Streams []struct {
-			CodecType string  `json:"codec_type"`
-			Width     int     `json:"width"`
-			Height    int     `json:"height"`
+			CodecType  string `json:"codec_type"`
+			Width      int    `json:"width"`
+			Height     int    `json:"height"`
 			RFrameRate string `json:"r_frame_rate"`
 		} `json:"streams"`
 	}
@@ -443,7 +431,7 @@ func validateVideoFile(path string) (*VideoInfo, error) {
 	}
 
 	info := &VideoInfo{}
-	
+
 	// Parse duration
 	if probe.Format.Duration != "" {
 		if d, err := strconv.ParseFloat(probe.Format.Duration, 64); err == nil {
@@ -485,14 +473,14 @@ func extractAudioEnhanced(inputPath, outputPath string, maxRetries int) error {
 func extractAudioEnhancedWithPreprocessing(inputPath, outputPath string, maxRetries int, enablePreprocessing bool) error {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		var err error
-		
+
 		// 使用带预处理的音频提取
 		if enablePreprocessing {
 			err = extractAudioWithPreprocessing(inputPath, outputPath, true)
 		} else {
 			err = extractAudio(inputPath, outputPath)
 		}
-		
+
 		if err == nil {
 			// Verify audio file was created and has content
 			if stat, statErr := os.Stat(outputPath); statErr == nil && stat.Size() > 0 {
@@ -501,16 +489,16 @@ func extractAudioEnhancedWithPreprocessing(inputPath, outputPath string, maxRetr
 			}
 			err = fmt.Errorf("audio file empty or not created")
 		}
-		
+
 		log.Printf("Audio extraction attempt %d/%d failed: %v", attempt, maxRetries, err)
-		
+
 		if attempt < maxRetries {
 			time.Sleep(time.Duration(attempt) * time.Second) // Progressive delay
 			// Clean up failed attempt
 			os.Remove(outputPath)
 		}
 	}
-	
+
 	return fmt.Errorf("audio extraction failed after %d attempts", maxRetries)
 }
 
@@ -525,9 +513,9 @@ func extractFramesEnhanced(inputPath, framesDir string, intervalSec int, maxRetr
 			}
 			err = fmt.Errorf("no frames generated")
 		}
-		
+
 		log.Printf("Frame extraction attempt %d/%d failed: %v", attempt, maxRetries, err)
-		
+
 		if attempt < maxRetries {
 			time.Sleep(time.Duration(attempt) * time.Second)
 			// Clean up failed frames
@@ -535,7 +523,7 @@ func extractFramesEnhanced(inputPath, framesDir string, intervalSec int, maxRetr
 			os.MkdirAll(framesDir, 0755)
 		}
 	}
-	
+
 	return fmt.Errorf("frame extraction failed after %d attempts", maxRetries)
 }
 
@@ -566,14 +554,14 @@ func loadCheckpoint(jobDir string) (*ProcessingCheckpoint, error) {
 func processVideoWithFallback(jobID, videoPath string) error {
 	jobDir := filepath.Join(core.DataRoot(), jobID)
 	framesDir := filepath.Join(jobDir, "frames")
-	
+
 	// Initialize checkpoint
 	checkpoint := &ProcessingCheckpoint{
 		JobID:       jobID,
 		StartTime:   time.Now(),
 		CurrentStep: "validation",
 	}
-	
+
 	// Step 1: Validate video file
 	log.Printf("[%s] Validating video file: %s", jobID, videoPath)
 	videoInfo, err := validateVideoFile(videoPath)
@@ -582,16 +570,16 @@ func processVideoWithFallback(jobID, videoPath string) error {
 		saveCheckpoint(jobDir, checkpoint)
 		return fmt.Errorf("video validation failed: %v", err)
 	}
-	
+
 	checkpoint.VideoInfo = videoInfo
 	checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "validation")
 	checkpoint.CurrentStep = "audio_extraction"
 	saveCheckpoint(jobDir, checkpoint)
-	
+
 	// Step 2: Extract audio with retry
 	log.Printf("[%s] Extracting audio (duration: %.1fs, has_audio: %v)", jobID, videoInfo.Duration, videoInfo.HasAudio)
 	audioPath := filepath.Join(jobDir, "audio.wav")
-	
+
 	if videoInfo.HasAudio {
 		if err := extractAudioEnhanced(videoPath, audioPath, 3); err != nil {
 			log.Printf("[%s] Audio extraction failed, continuing with fallback: %v", jobID, err)
@@ -611,10 +599,10 @@ func processVideoWithFallback(jobID, videoPath string) error {
 		}
 		checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "audio_extraction")
 	}
-	
+
 	checkpoint.CurrentStep = "frame_extraction"
 	saveCheckpoint(jobDir, checkpoint)
-	
+
 	// Step 3: Extract frames with retry
 	log.Printf("[%s] Extracting frames (resolution: %dx%d, fps: %.1f)", jobID, videoInfo.Width, videoInfo.Height, videoInfo.FPS)
 	if err := extractFramesEnhanced(videoPath, framesDir, 5, 3); err != nil {
@@ -622,11 +610,11 @@ func processVideoWithFallback(jobID, videoPath string) error {
 		saveCheckpoint(jobDir, checkpoint)
 		return fmt.Errorf("frame extraction failed: %v", err)
 	}
-	
+
 	checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "frame_extraction")
 	checkpoint.CurrentStep = "completed"
 	saveCheckpoint(jobDir, checkpoint)
-	
+
 	log.Printf("[%s] Video preprocessing completed successfully", jobID)
 	return nil
 }
@@ -650,15 +638,15 @@ func copyFileEnhanced(src, dst string, maxRetries int) error {
 				err = fmt.Errorf("cannot stat source file: %v", statErr)
 			}
 		}
-		
+
 		log.Printf("File copy attempt %d/%d failed: %v", attempt, maxRetries, err)
-		
+
 		if attempt < maxRetries {
 			time.Sleep(time.Duration(attempt) * time.Second)
 			// 清理失败的文件
 			os.Remove(dst)
 		}
 	}
-	
+
 	return fmt.Errorf("file copy failed after %d attempts", maxRetries)
 }

@@ -34,20 +34,20 @@ type SystemInfo struct {
 
 // StorageInfo 存储信息
 type StorageInfo struct {
-	DataRoot      string `json:"data_root"`
-	TotalJobs     int    `json:"total_jobs"`
-	CompleteJobs  int    `json:"complete_jobs"`
-	PartialJobs   int    `json:"partial_jobs"`
-	FailedJobs    int    `json:"failed_jobs"`
-	DiskUsageMB   int64  `json:"disk_usage_mb"`
+	DataRoot     string `json:"data_root"`
+	TotalJobs    int    `json:"total_jobs"`
+	CompleteJobs int    `json:"complete_jobs"`
+	PartialJobs  int    `json:"partial_jobs"`
+	FailedJobs   int    `json:"failed_jobs"`
+	DiskUsageMB  int64  `json:"disk_usage_mb"`
 }
 
 // ProcessingStats 处理统计信息
 type ProcessingStats struct {
-	TotalProcessed    int     `json:"total_processed"`
-	SuccessRate       float64 `json:"success_rate"`
-	AverageTime       float64 `json:"average_time_seconds"`
-	LastProcessedTime string  `json:"last_processed_time"`
+	TotalProcessed    int         `json:"total_processed"`
+	SuccessRate       float64     `json:"success_rate"`
+	AverageTime       float64     `json:"average_time_seconds"`
+	LastProcessedTime string      `json:"last_processed_time"`
 	CommonErrors      []ErrorStat `json:"common_errors"`
 }
 
@@ -57,93 +57,23 @@ type ErrorStat struct {
 	Count int    `json:"count"`
 }
 
-// healthCheckHandler 健康检查端点
-func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	
-	// 执行各项健康检查
-	checks := make(map[string]HealthCheck)
-	
-	// 检查FFmpeg
-	checks["ffmpeg"] = checkFFmpegHealth()
-	
-	// 检查Python
-	checks["python"] = checkPythonHealth()
-	
-	// 检查Whisper
-	checks["whisper"] = checkWhisperHealth()
-	
-	// 检查磁盘空间
-	checks["disk_space"] = checkDiskSpaceHealth()
-	
-	// 检查数据目录
-	checks["data_directory"] = checkDataDirectoryHealth()
-	
-	// 收集系统信息（暂时不使用，但保留用于将来扩展）
-	_ = SystemInfo{
-		OS:           runtime.GOOS,
-		Arch:         runtime.GOARCH,
-		GoVersion:    runtime.Version(),
-		NumCPU:       runtime.NumCPU(),
-		NumGoroutine: runtime.NumGoroutine(),
-	}
+// HTTP处理器已移至server包以保持职责分离
+// 这些函数已弃用，请使用server/monitoring_handlers.go中的对应函数
 
-	// 收集存储信息（暂时不使用，但保留用于将来扩展）
-	_ = collectStorageInfo()
-	
-	// 确定整体状态
-	overallStatus := "healthy"
-	for _, check := range checks {
-		if check.Status == "error" {
-			overallStatus = "unhealthy"
-			break
-		} else if check.Status == "warning" && overallStatus == "healthy" {
-			overallStatus = "degraded"
-		}
-	}
-	
-	// 获取实际系统指标
-	cpuUsage := getCurrentCPUUsage()
-	memoryUsage := getCurrentMemoryUsage()
-	gpuUsage := getCurrentGPUUsage()
-	activeWorkers := getActiveWorkers()
-	queuedJobs := getQueuedJobs()
-	completedJobs := getCompletedJobs()
-	failedJobs := getFailedJobs()
-	
-	// 构建响应
-	healthStatus := HealthStatus{
-		Timestamp:     time.Now(),
-		OverallStatus: overallStatus,
-		ActiveWorkers: activeWorkers,
-		QueuedJobs:    queuedJobs,
-		CompletedJobs: completedJobs,
-		FailedJobs:    failedJobs,
-		CPUUsage:      cpuUsage,
-		MemoryUsage:   memoryUsage,
-		GPUUsage:      gpuUsage,
-	}
-	
-	// 设置HTTP状态码
-	statusCode := http.StatusOK
-	if overallStatus == "unhealthy" {
-		statusCode = http.StatusServiceUnavailable
-	} else if overallStatus == "degraded" {
-		statusCode = http.StatusPartialContent
-	}
-	
-	log.Printf("Health check completed in %v, status: %s", time.Since(start), overallStatus)
-	writeJSON(w, statusCode, healthStatus)
+// healthCheckHandler 健康检查端点 - 已弃用，请使用server.MonitoringHandlers.HealthCheckHandler
+func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
+	// 直接返回一个简单的有效响应以避免编译错误
+	http.Error(w, "This handler is deprecated. Use server.MonitoringHandlers.HealthCheckHandler instead.", http.StatusServiceUnavailable)
 }
 
 // checkFFmpegHealth 检查FFmpeg健康状态
 func checkFFmpegHealth() HealthCheck {
 	start := time.Now()
-	
+
 	cmd := exec.Command("ffmpeg", "-version")
 	output, err := cmd.Output()
 	latency := time.Since(start).Milliseconds()
-	
+
 	if err != nil {
 		return HealthCheck{
 			Status:  "error",
@@ -151,7 +81,7 @@ func checkFFmpegHealth() HealthCheck {
 			Latency: latency,
 		}
 	}
-	
+
 	// 解析版本信息
 	versionLine := strings.Split(string(output), "\n")[0]
 	return HealthCheck{
@@ -164,11 +94,11 @@ func checkFFmpegHealth() HealthCheck {
 // checkPythonHealth 检查Python健康状态
 func checkPythonHealth() HealthCheck {
 	start := time.Now()
-	
+
 	cmd := exec.Command("python", "--version")
 	output, err := cmd.Output()
 	latency := time.Since(start).Milliseconds()
-	
+
 	if err != nil {
 		return HealthCheck{
 			Status:  "error",
@@ -176,7 +106,7 @@ func checkPythonHealth() HealthCheck {
 			Latency: latency,
 		}
 	}
-	
+
 	versionLine := strings.TrimSpace(string(output))
 	return HealthCheck{
 		Status:  "ok",
@@ -188,11 +118,11 @@ func checkPythonHealth() HealthCheck {
 // checkWhisperHealth 检查Whisper健康状态
 func checkWhisperHealth() HealthCheck {
 	start := time.Now()
-	
+
 	cmd := exec.Command("python", "-c", "import whisper; print(f'Whisper version: {whisper.__version__}')")
 	output, err := cmd.Output()
 	latency := time.Since(start).Milliseconds()
-	
+
 	if err != nil {
 		return HealthCheck{
 			Status:  "warning",
@@ -200,7 +130,7 @@ func checkWhisperHealth() HealthCheck {
 			Latency: latency,
 		}
 	}
-	
+
 	versionLine := strings.TrimSpace(string(output))
 	return HealthCheck{
 		Status:  "ok",
@@ -212,12 +142,12 @@ func checkWhisperHealth() HealthCheck {
 // checkDiskSpaceHealth 检查磁盘空间健康状态
 func checkDiskSpaceHealth() HealthCheck {
 	start := time.Now()
-	
+
 	// 检查data目录是否可写
 	testFile := filepath.Join(DataRoot(), ".health_check")
 	err := os.WriteFile(testFile, []byte("health check"), 0644)
 	latency := time.Since(start).Milliseconds()
-	
+
 	if err != nil {
 		return HealthCheck{
 			Status:  "error",
@@ -225,14 +155,14 @@ func checkDiskSpaceHealth() HealthCheck {
 			Latency: latency,
 		}
 	}
-	
+
 	// 清理测试文件
 	os.Remove(testFile)
-	
+
 	// 检查磁盘使用情况
 	usage := calculateDiskUsage(DataRoot())
 	message := fmt.Sprintf("Data directory writable, usage: %.2f MB", float64(usage)/1024/1024)
-	
+
 	// 如果使用超过1GB，给出警告
 	if usage > 1024*1024*1024 {
 		return HealthCheck{
@@ -241,7 +171,7 @@ func checkDiskSpaceHealth() HealthCheck {
 			Latency: latency,
 		}
 	}
-	
+
 	return HealthCheck{
 		Status:  "ok",
 		Message: message,
@@ -252,7 +182,7 @@ func checkDiskSpaceHealth() HealthCheck {
 // checkDataDirectoryHealth 检查数据目录健康状态
 func checkDataDirectoryHealth() HealthCheck {
 	start := time.Now()
-	
+
 	dataDir := DataRoot()
 	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
 		return HealthCheck{
@@ -261,7 +191,7 @@ func checkDataDirectoryHealth() HealthCheck {
 			Latency: time.Since(start).Milliseconds(),
 		}
 	}
-	
+
 	// 统计作业数量
 	files, err := os.ReadDir(dataDir)
 	if err != nil {
@@ -271,14 +201,14 @@ func checkDataDirectoryHealth() HealthCheck {
 			Latency: time.Since(start).Milliseconds(),
 		}
 	}
-	
+
 	jobCount := 0
 	for _, file := range files {
 		if file.IsDir() && len(file.Name()) == 32 { // 假设作业ID是32字符的哈希
 			jobCount++
 		}
 	}
-	
+
 	return HealthCheck{
 		Status:  "ok",
 		Message: fmt.Sprintf("Data directory accessible, %d jobs found", jobCount),
@@ -293,21 +223,21 @@ func collectStorageInfo() StorageInfo {
 		DataRoot:    dataDir,
 		DiskUsageMB: calculateDiskUsage(dataDir) / 1024 / 1024,
 	}
-	
+
 	// 统计作业状态
 	files, err := os.ReadDir(dataDir)
 	if err != nil {
 		return info
 	}
-	
+
 	for _, file := range files {
 		if !file.IsDir() || len(file.Name()) != 32 {
 			continue
 		}
-		
+
 		info.TotalJobs++
 		jobDir := filepath.Join(dataDir, file.Name())
-		
+
 		// 检查作业完成状态
 		if hasFile(jobDir, "items.json") && hasFile(jobDir, "transcript.json") {
 			info.CompleteJobs++
@@ -317,14 +247,14 @@ func collectStorageInfo() StorageInfo {
 			info.FailedJobs++
 		}
 	}
-	
+
 	return info
 }
 
 // calculateDiskUsage 计算目录磁盘使用量
 func calculateDiskUsage(dir string) int64 {
 	var size int64
-	
+
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // 忽略错误，继续计算
@@ -334,7 +264,7 @@ func calculateDiskUsage(dir string) int64 {
 		}
 		return nil
 	})
-	
+
 	return size
 }
 
@@ -357,25 +287,25 @@ func collectProcessingStats() ProcessingStats {
 	stats := ProcessingStats{
 		CommonErrors: []ErrorStat{},
 	}
-	
+
 	files, err := os.ReadDir(dataDir)
 	if err != nil {
 		return stats
 	}
-	
+
 	errorCounts := make(map[string]int)
 	var totalTime float64
 	var timeCount int
 	var lastProcessed time.Time
-	
+
 	for _, file := range files {
 		if !file.IsDir() || len(file.Name()) != 32 {
 			continue
 		}
-		
+
 		stats.TotalProcessed++
 		jobDir := filepath.Join(dataDir, file.Name())
-		
+
 		// 检查是否成功
 		if hasFile(jobDir, "items.json") && hasFile(jobDir, "transcript.json") {
 			// 成功的作业
@@ -403,7 +333,7 @@ func collectProcessingStats() ProcessingStats {
 			}
 		}
 	}
-	
+
 	// 计算成功率
 	if stats.TotalProcessed > 0 {
 		successCount := 0
@@ -418,17 +348,17 @@ func collectProcessingStats() ProcessingStats {
 		}
 		stats.SuccessRate = float64(successCount) / float64(stats.TotalProcessed) * 100
 	}
-	
+
 	// 计算平均时间
 	if timeCount > 0 {
 		stats.AverageTime = totalTime / float64(timeCount)
 	}
-	
+
 	// 设置最后处理时间
 	if !lastProcessed.IsZero() {
 		stats.LastProcessedTime = lastProcessed.Format(time.RFC3339)
 	}
-	
+
 	// 收集常见错误
 	for errorMsg, count := range errorCounts {
 		stats.CommonErrors = append(stats.CommonErrors, ErrorStat{
@@ -436,7 +366,7 @@ func collectProcessingStats() ProcessingStats {
 			Count: count,
 		})
 	}
-	
+
 	return stats
 }
 
@@ -446,24 +376,24 @@ func readCheckpoint(path string) *ProcessingCheckpoint {
 	if err != nil {
 		return nil
 	}
-	
+
 	var checkpoint ProcessingCheckpoint
 	if err := json.Unmarshal(data, &checkpoint); err != nil {
 		return nil
 	}
-	
+
 	return &checkpoint
 }
 
 // diagnosticsHandler 诊断信息端点
 func diagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 	diagnostics := map[string]interface{}{
-		"health":     collectHealthSummary(),
-		"statistics": collectProcessingStats(),
+		"health":      collectHealthSummary(),
+		"statistics":  collectProcessingStats(),
 		"recent_jobs": collectRecentJobs(10),
 		"system_info": collectSystemDiagnostics(),
 	}
-	
+
 	writeJSON(w, http.StatusOK, diagnostics)
 }
 
@@ -485,27 +415,27 @@ func collectRecentJobs(limit int) []map[string]interface{} {
 	if err != nil {
 		return nil
 	}
-	
+
 	var jobs []map[string]interface{}
 	for i, file := range files {
 		if i >= limit {
 			break
 		}
-		
+
 		if !file.IsDir() || len(file.Name()) != 32 {
 			continue
 		}
-		
+
 		jobDir := filepath.Join(dataDir, file.Name())
 		jobInfo := map[string]interface{}{
-			"job_id": file.Name(),
-			"has_frames": hasFile(jobDir, "frames"),
-			"has_audio": hasFile(jobDir, "audio.wav"),
+			"job_id":         file.Name(),
+			"has_frames":     hasFile(jobDir, "frames"),
+			"has_audio":      hasFile(jobDir, "audio.wav"),
 			"has_transcript": hasFile(jobDir, "transcript.json"),
-			"has_items": hasFile(jobDir, "items.json"),
+			"has_items":      hasFile(jobDir, "items.json"),
 			"has_checkpoint": hasFile(jobDir, "checkpoint.json"),
 		}
-		
+
 		// 读取检查点信息
 		if checkpointPath := filepath.Join(jobDir, "checkpoint.json"); hasFile(jobDir, "checkpoint.json") {
 			if checkpoint := readCheckpoint(checkpointPath); checkpoint != nil {
@@ -518,10 +448,10 @@ func collectRecentJobs(limit int) []map[string]interface{} {
 				}
 			}
 		}
-		
+
 		jobs = append(jobs, jobInfo)
 	}
-	
+
 	return jobs
 }
 
@@ -553,10 +483,10 @@ func getMemoryStats() map[string]interface{} {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 	return map[string]interface{}{
-		"alloc":      m.Alloc,
+		"alloc":       m.Alloc,
 		"total_alloc": m.TotalAlloc,
-		"sys":        m.Sys,
-		"num_gc":     m.NumGC,
+		"sys":         m.Sys,
+		"num_gc":      m.NumGC,
 	}
 }
 
@@ -565,7 +495,7 @@ func getCurrentCPUUsage() float64 {
 	// 基于当前运行的goroutine数量估算CPU使用率
 	numGoroutine := runtime.NumGoroutine()
 	numCPU := runtime.NumCPU()
-	
+
 	// 简化的CPU使用率计算：goroutine数量 / CPU核心数 * 基础负载系数
 	usage := float64(numGoroutine) / float64(numCPU) * 10.0
 	if usage > 100.0 {
@@ -590,7 +520,7 @@ func getCurrentGPUUsage() float64 {
 		// 如果nvidia-smi不可用，返回0
 		return 0.0
 	}
-	
+
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	if len(lines) > 0 {
 		if usage, err := strconv.ParseFloat(strings.TrimSpace(lines[0]), 64); err == nil {
@@ -620,13 +550,13 @@ func getQueuedJobs() int {
 	if err != nil {
 		return 0
 	}
-	
+
 	queuedCount := 0
 	for _, file := range files {
 		if !file.IsDir() || len(file.Name()) != 32 {
 			continue
 		}
-		
+
 		jobDir := filepath.Join(dataDir, file.Name())
 		// 如果有checkpoint但没有完成文件，认为是队列中的作业
 		if hasFile(jobDir, "checkpoint.json") && !hasFile(jobDir, "items.json") {
@@ -643,13 +573,13 @@ func getCompletedJobs() int {
 	if err != nil {
 		return 0
 	}
-	
+
 	completedCount := 0
 	for _, file := range files {
 		if !file.IsDir() || len(file.Name()) != 32 {
 			continue
 		}
-		
+
 		jobDir := filepath.Join(dataDir, file.Name())
 		// 如果同时有items.json和transcript.json，认为是已完成的作业
 		if hasFile(jobDir, "items.json") && hasFile(jobDir, "transcript.json") {
@@ -666,13 +596,13 @@ func getFailedJobs() int {
 	if err != nil {
 		return 0
 	}
-	
+
 	failedCount := 0
 	for _, file := range files {
 		if !file.IsDir() || len(file.Name()) != 32 {
 			continue
 		}
-		
+
 		jobDir := filepath.Join(dataDir, file.Name())
 		// 检查checkpoint中是否有错误记录
 		if checkpointPath := filepath.Join(jobDir, "checkpoint.json"); hasFile(jobDir, "checkpoint.json") {

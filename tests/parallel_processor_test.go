@@ -16,7 +16,7 @@ import (
 // TestParallelProcessor 测试并行处理器
 func TestParallelProcessor(t *testing.T) {
 	// 创建增强资源管理器
-	resourceManager := core.GetUnifiedResourceManager()
+	resourceManager := core.GetResourceManager()
 	defer resourceManager.Shutdown()
 
 	// 创建并行处理器
@@ -141,7 +141,7 @@ func testStatusQueries(t *testing.T, processor *processors.ParallelProcessor) {
 // BenchmarkParallelProcessor 性能测试
 func BenchmarkParallelProcessor(b *testing.B) {
 	// 创建资源管理器
-	resourceManager := core.GetUnifiedResourceManager()
+	resourceManager := core.GetResourceManager()
 	defer resourceManager.Shutdown()
 
 	// 创建并行处理器
@@ -177,7 +177,7 @@ func TestParallelProcessorIntegration(t *testing.T) {
 	defer os.RemoveAll(testDir)
 
 	// 创建资源管理器
-	resourceManager := core.GetUnifiedResourceManager()
+	resourceManager := core.GetResourceManager()
 	defer resourceManager.Shutdown()
 
 	// 创建并行处理器

@@ -28,7 +28,7 @@ func NewSystemInitializer(dataRoot string) *SystemInitializer {
 // InitializationResult 初始化结果
 type InitializationResult struct {
 	Config            *config.Config
-	ResourceManager   *core.UnifiedResourceManager
+	ResourceManager   *core.ResourceManager
 	ParallelProcessor *processors.ParallelProcessor
 	VectorStore       storage.VectorStore
 	EnhancedStore     *storage.EnhancedVectorStore
@@ -109,10 +109,10 @@ func (si *SystemInitializer) InitializeSystem() *InitializationResult {
 func (si *SystemInitializer) LoadConfig() (*config.Config, error) {
 	cfg := &config.Config{
 		// 默认配置
-		GPUAcceleration:  true,
-		GPUType:          "auto",
+		GPUAcceleration: true,
+		GPUType:         "auto",
 	}
-	
+
 	// 从环境变量或配置文件加载配置
 	if dataRootEnv := os.Getenv("DATA_ROOT"); dataRootEnv != "" {
 		si.dataRoot = dataRootEnv
@@ -174,13 +174,13 @@ func (si *SystemInitializer) InitializeEnhancedVectorStore() (*storage.EnhancedV
 }
 
 // InitializeResourceManager 初始化资源管理器
-func (si *SystemInitializer) InitializeResourceManager() (*core.UnifiedResourceManager, error) {
-	resourceManager := core.GetUnifiedResourceManager()
+func (si *SystemInitializer) InitializeResourceManager() (*core.ResourceManager, error) {
+	resourceManager := core.GetResourceManager()
 	return resourceManager, nil
 }
 
 // InitializeParallelProcessor 初始化并行处理器
-func (si *SystemInitializer) InitializeParallelProcessor(rm *core.UnifiedResourceManager) (*processors.ParallelProcessor, error) {
+func (si *SystemInitializer) InitializeParallelProcessor(rm *core.ResourceManager) (*processors.ParallelProcessor, error) {
 	parallelProcessor := processors.NewParallelProcessor(rm)
 	return parallelProcessor, nil
 }
@@ -238,25 +238,25 @@ func (si *SystemInitializer) validateNVIDIAGPU() error {
 func (si *SystemInitializer) validateAMDGPU() error {
 	// AMD GPU验证逻辑
 	log.Println("开始验证AMD GPU...")
-	
+
 	// 检查ROCm环境
 	if _, err := utils.RunCommand("rocm-smi", "--version"); err != nil {
 		log.Printf("ROCm工具未找到，尝试其他方式验证AMD GPU: %v", err)
-		
+
 		// 尝试检查设备文件
 		if _, err := os.Stat("/dev/kfd"); err != nil {
 			log.Printf("AMD GPU设备文件未找到: %v", err)
 			return fmt.Errorf("AMD GPU不可用")
 		}
 	}
-	
+
 	// 检查AMD GPU设备信息
 	if output, err := utils.RunCommand("lspci", "-nn", "|", "grep", "-i", "amd"); err == nil {
 		log.Printf("检测到AMD设备: %s", output)
 	} else {
 		log.Printf("未检测到AMD GPU设备，但继续验证")
 	}
-	
+
 	log.Println("AMD GPU验证完成")
 	return nil
 }
@@ -265,32 +265,32 @@ func (si *SystemInitializer) validateAMDGPU() error {
 func (si *SystemInitializer) validateIntelGPU() error {
 	// Intel GPU验证逻辑
 	log.Println("开始验证Intel GPU...")
-	
+
 	// 检查Intel GPU驱动
 	if _, err := utils.RunCommand("intel_gpu_top", "--version"); err != nil {
 		log.Printf("Intel GPU工具未找到，尝试其他方式验证: %v", err)
-		
+
 		// 检查设备文件
 		if _, err := os.Stat("/dev/dri"); err != nil {
 			log.Printf("DRI设备目录未找到: %v", err)
 			// Intel GPU可能仍然可用，不返回错误
 		}
 	}
-	
+
 	// 检查Intel GPU设备信息
 	if output, err := utils.RunCommand("lspci", "-nn", "|", "grep", "-i", "intel.*vga"); err == nil {
 		log.Printf("检测到Intel GPU设备: %s", output)
 	} else {
 		log.Printf("未检测到Intel GPU设备，但继续验证")
 	}
-	
+
 	// 检查OpenCL支持
 	if _, err := utils.RunCommand("clinfo"); err == nil {
 		log.Println("OpenCL支持可用")
 	} else {
 		log.Printf("OpenCL支持不可用: %v", err)
 	}
-	
+
 	log.Println("Intel GPU验证完成")
 	return nil
 }

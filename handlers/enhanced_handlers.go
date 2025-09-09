@@ -19,14 +19,6 @@ import (
 // 类型定义
 type EnhancedVectorStore = storage.Store
 
-
-
-
-
-
-
-
-
 // 全局变量
 var (
 	globalProcessor *processors.ParallelProcessor
@@ -34,7 +26,7 @@ var (
 )
 
 // 全局资源管理器
-var enhancedResourceManager *core.EnhancedResourceManager
+var enhancedResourceManager *core.ResourceManager
 
 // 辅助函数
 func newID() string {
@@ -55,7 +47,7 @@ func writeJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}
 }
 
 // 初始化处理器
-func InitProcessor(resourceManager *core.UnifiedResourceManager) {
+func InitProcessor(resourceManager *core.ResourceManager) {
 	// 使用processors包的ParallelProcessor
 	globalProcessor = processors.NewParallelProcessor(resourceManager)
 }
@@ -90,8 +82,6 @@ type Hit struct {
 	Metadata map[string]interface{} `json:"metadata"`
 	Content  string                 `json:"content"`
 }
-
-
 
 // ProcessParallelHandler 并行处理视频的HTTP处理器
 func ProcessParallelHandler(w http.ResponseWriter, r *http.Request) {
@@ -241,7 +231,7 @@ func enhancedResourceHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := enhancedResourceManager.GetEnhancedStatus()
+	status := enhancedResourceManager.GetResourceStatus()
 	writeJSONWithStatus(w, http.StatusOK, status)
 }
 
@@ -356,14 +346,12 @@ func submitJobHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 提交作业
-	err := enhancedResourceManager.SubmitJob(req.JobType, req.Priority, req.Payload, func(result *core.JobResult) {
-		log.Printf("Job %s completed: success=%v, duration=%v", result.TaskID, result.Success, result.Duration)
-	})
-
+	// 分配资源
+	jobID := newID()
+	_, err := enhancedResourceManager.AllocateResources(jobID, req.JobType, strconv.Itoa(req.Priority))
 	if err != nil {
-		log.Printf("Failed to submit job: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to submit job: %v", err), http.StatusInternalServerError)
+		log.Printf("Failed to allocate resources: %v", err)
+		http.Error(w, fmt.Sprintf("Failed to allocate resources: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -385,9 +373,9 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		JobID    string                 `json:"job_id"`
-		Query    string                 `json:"query"`
-		TopK     int                    `json:"top_k"`
+		JobID    string                `json:"job_id"`
+		Query    string                `json:"query"`
+		TopK     int                   `json:"top_k"`
 		Strategy *HybridSearchStrategy `json:"strategy,omitempty"` // 可选的搜索策略
 	}
 
@@ -422,8 +410,8 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 		// 使用指定策略
 		strategyStr := string(*req.Strategy)
 		strategy := storage.HybridSearchStrategy{
-			Strategy: strategyStr,
-			VectorWeight: 0.6,
+			Strategy:       strategyStr,
+			VectorWeight:   0.6,
 			FullTextWeight: 0.4,
 			SemanticWeight: 0.5,
 		}
@@ -433,9 +421,9 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 			results = make([]Hit, len(coreHits))
 			for i, h := range coreHits {
 				results[i] = Hit{
-					ID:       h.SegmentID,
-					Score:    h.Score,
-					Content:  h.Text,
+					ID:      h.SegmentID,
+					Score:   h.Score,
+					Content: h.Text,
 					Metadata: map[string]interface{}{
 						"video_id":   h.VideoID,
 						"job_id":     h.JobID,
@@ -456,9 +444,9 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 			results = make([]Hit, len(coreHits))
 			for i, h := range coreHits {
 				results[i] = Hit{
-					ID:       h.SegmentID,
-					Score:    h.Score,
-					Content:  h.Text,
+					ID:      h.SegmentID,
+					Score:   h.Score,
+					Content: h.Text,
 					Metadata: map[string]interface{}{
 						"video_id":   h.VideoID,
 						"job_id":     h.JobID,
@@ -533,11 +521,11 @@ func batchUpsertHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"job_id":       req.JobID,
-		"items_count":  len(req.Items),
-		"duration_ms":  duration.Milliseconds(),
-		"status":       "completed",
-		"message":      "Batch upsert completed successfully",
+		"job_id":      req.JobID,
+		"items_count": len(req.Items),
+		"duration_ms": duration.Milliseconds(),
+		"status":      "completed",
+		"message":     "Batch upsert completed successfully",
 	}
 
 	writeJSONWithStatus(w, http.StatusOK, response)
@@ -612,7 +600,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 获取增强资源管理器指标
 	if enhancedResourceManager != nil {
-		metrics["enhanced_resources"] = enhancedResourceManager.GetEnhancedStatus()
+		metrics["enhanced_resources"] = enhancedResourceManager.GetResourceStatus()
 	}
 
 	// 获取并行处理器指标
@@ -809,8 +797,8 @@ func indexStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"timestamp":        time.Now(),
-		"pgvector_status":  pgStatus,
+		"timestamp":       time.Now(),
+		"pgvector_status": pgStatus,
 		"enhanced_status": enhancedStatus,
 	}
 
@@ -865,12 +853,12 @@ func indexRebuildHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"store_type":   req.StoreType,
-		"job_id":       req.JobID,
-		"force":        req.Force,
-		"duration_ms":  time.Since(start).Milliseconds(),
-		"results":      results,
-		"timestamp":    time.Now(),
+		"store_type":  req.StoreType,
+		"job_id":      req.JobID,
+		"force":       req.Force,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"results":     results,
+		"timestamp":   time.Now(),
 	}
 
 	writeJSONWithStatus(w, http.StatusOK, response)
@@ -928,11 +916,11 @@ func indexOptimizeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"store_type":   req.StoreType,
-		"auto_mode":    req.AutoMode,
-		"duration_ms":  time.Since(start).Milliseconds(),
-		"results":      results,
-		"timestamp":    time.Now(),
+		"store_type":  req.StoreType,
+		"auto_mode":   req.AutoMode,
+		"duration_ms": time.Since(start).Milliseconds(),
+		"results":     results,
+		"timestamp":   time.Now(),
 	}
 
 	writeJSONWithStatus(w, http.StatusOK, response)
@@ -978,8 +966,8 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 			// 使用指定策略
 			strategyStr := string(*req.Strategy)
 			strategy := storage.HybridSearchStrategy{
-				Strategy: strategyStr,
-				VectorWeight: 0.6,
+				Strategy:       strategyStr,
+				VectorWeight:   0.6,
 				FullTextWeight: 0.4,
 				SemanticWeight: 0.5,
 			}
@@ -989,18 +977,18 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 				hits = make([]Hit, len(coreHits))
 				for i, h := range coreHits {
 					hits[i] = Hit{
-					ID:       h.SegmentID,
-					Score:    h.Score,
-					Content:  h.Text,
-					Metadata: map[string]interface{}{
-						"video_id":   h.VideoID,
-						"job_id":     h.JobID,
-						"start":      h.Start,
-						"end":        h.End,
-						"summary":    h.Summary,
-						"frame_path": h.FramePath,
-					},
-				}
+						ID:      h.SegmentID,
+						Score:   h.Score,
+						Content: h.Text,
+						Metadata: map[string]interface{}{
+							"video_id":   h.VideoID,
+							"job_id":     h.JobID,
+							"start":      h.Start,
+							"end":        h.End,
+							"summary":    h.Summary,
+							"frame_path": h.FramePath,
+						},
+					}
 				}
 			}
 			strategyUsed = string(*req.Strategy)
@@ -1012,18 +1000,18 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 				hits = make([]Hit, len(coreHits))
 				for i, h := range coreHits {
 					hits[i] = Hit{
-					ID:       h.SegmentID,
-					Score:    h.Score,
-					Content:  h.Text,
-					Metadata: map[string]interface{}{
-						"video_id":   h.VideoID,
-						"job_id":     h.JobID,
-						"start":      h.Start,
-						"end":        h.End,
-						"summary":    h.Summary,
-						"frame_path": h.FramePath,
-					},
-				}
+						ID:      h.SegmentID,
+						Score:   h.Score,
+						Content: h.Text,
+						Metadata: map[string]interface{}{
+							"video_id":   h.VideoID,
+							"job_id":     h.JobID,
+							"start":      h.Start,
+							"end":        h.End,
+							"summary":    h.Summary,
+							"frame_path": h.FramePath,
+						},
+					}
 				}
 			}
 			strategyUsed = "balanced"

@@ -33,18 +33,6 @@ type GPUDevice struct {
 	LastUpdated time.Time
 }
 
-// GPUMetrics GPU使用指标
-type GPUMetrics struct {
-	TotalTasks      int64
-	CompletedTasks  int64
-	FailedTasks     int64
-	AverageTime     time.Duration
-	TotalTime       time.Duration
-	MemoryPeak      int64
-	UtilizationPeak float64
-	Mutex           sync.RWMutex
-}
-
 // GPUTask GPU任务
 type GPUTask struct {
 	ID        string

@@ -10,12 +10,12 @@ import (
 
 // ResourceHandlers 资源管理相关的HTTP处理器
 type ResourceHandlers struct {
-	resourceManager *core.UnifiedResourceManager
+	resourceManager *core.ResourceManager
 	processor       *processors.ParallelProcessor
 }
 
 // NewResourceHandlers 创建资源处理器实例
-func NewResourceHandlers(rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor) *ResourceHandlers {
+func NewResourceHandlers(rm *core.ResourceManager, pp *processors.ParallelProcessor) *ResourceHandlers {
 	return &ResourceHandlers{
 		resourceManager: rm,
 		processor:       pp,
@@ -89,14 +89,14 @@ func (h *ResourceHandlers) ProcessorStatusHandler(w http.ResponseWriter, r *http
 	}
 
 	processorStatus := map[string]interface{}{
-		"status":        "active",
-		"worker_count":  4, // 默认值，应该从processor获取
-		"queue_size":    0, // 默认值，应该从processor获取
-		"active_jobs":   0, // 默认值，应该从processor获取
-		"completed_jobs": 0, // 默认值，应该从processor获取
-		"failed_jobs":   0, // 默认值，应该从processor获取
+		"status":          "active",
+		"worker_count":    4, // 默认值，应该从processor获取
+		"queue_size":      0, // 默认值，应该从processor获取
+		"active_jobs":     0, // 默认值，应该从processor获取
+		"completed_jobs":  0, // 默认值，应该从processor获取
+		"failed_jobs":     0, // 默认值，应该从processor获取
 		"processing_mode": "parallel",
-		"last_activity": time.Now().Unix(),
+		"last_activity":   time.Now().Unix(),
 		"performance": map[string]interface{}{
 			"avg_processing_time": "0s",
 			"throughput":          "0 jobs/min",

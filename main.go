@@ -52,9 +52,8 @@ func main() {
 	integrityHandlers := server.NewIntegrityHandlers(dataRoot)
 
 	// 注册路由
-	// 处理器路由
-	http.HandleFunc("/process-video", processors.ProcessVideoHandler)
-	http.HandleFunc("/preprocess", processors.PreprocessHandler)
+	// 核心处理路由 - 使用更完善的并行处理
+	http.HandleFunc("/process-parallel", handlers.ProcessParallelHandler)
 	http.HandleFunc("/preprocess-enhanced", processors.PreprocessWithAudioEnhancementHandler)
 	http.HandleFunc("/transcribe", processors.TranscribeHandler)
 	http.HandleFunc("/correct-text", processors.CorrectTextHandler)
@@ -64,21 +63,17 @@ func main() {
 	http.HandleFunc("/store", storage.StoreHandler)
 	http.HandleFunc("/query", storage.QueryHandler)
 
-	// 并行处理路由
-	http.HandleFunc("/process-parallel", handlers.ProcessParallelHandler)
-
-	// 监控路由
+	// 监控路由 - 来自 server 包，功能完善
 	http.HandleFunc("/health", monitoringHandlers.HealthCheckHandler)
 	http.HandleFunc("/stats", monitoringHandlers.StatsHandler)
 	http.HandleFunc("/diagnostics", monitoringHandlers.DiagnosticsHandler)
 
-	// 资源管理路由
-	http.HandleFunc("/resources", resourceHandlers.ResourceHandler)
+	// 资源管理路由 - 来自 server 包，保留增强版本
 	http.HandleFunc("/enhanced-resources", resourceHandlers.EnhancedResourceHandler)
 	http.HandleFunc("/processor-status", resourceHandlers.ProcessorStatusHandler)
 	http.HandleFunc("/gpu-status", resourceHandlers.GPUStatusHandler)
 
-	// 批处理路由
+	// 批处理路由 - 来自 server 包，功能最完善
 	http.HandleFunc("/process-batch", batchHandlers.ProcessBatchHandler)
 	http.HandleFunc("/pipeline-status", batchHandlers.PipelineStatusHandler)
 	http.HandleFunc("/unified-status", batchHandlers.UnifiedStatusHandler)

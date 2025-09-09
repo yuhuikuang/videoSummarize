@@ -12,8 +12,8 @@ import (
 )
 
 // GetResourceManager 获取资源管理器
-func GetResourceManager() *core.UnifiedResourceManager {
-	return core.GetUnifiedResourceManager()
+func GetResourceManager() *core.ResourceManager {
+	return core.GetResourceManager()
 }
 
 // CPUWorkerPool CPU工作池
@@ -97,21 +97,21 @@ type LoadBalancerMetrics struct {
 
 // ParallelProcessor 并行处理器
 type ParallelProcessor struct {
-	resourceManager *core.UnifiedResourceManager
+	resourceManager *core.ResourceManager
 	config          *ParallelProcessorConfig
 	ctx             context.Context
 	cancel          context.CancelFunc
 	mu              sync.RWMutex
 	pipelines       map[string]*ProcessingPipeline
-	metrics         *ProcessorMetrics
+	metrics         *PipelineMetrics
 	// 新增CPU优化组件
 	cpuWorkerPools  []*CPUWorkerPool
 	loadBalancer    *CPULoadBalancer
 	cpuMonitor      *CPUMonitor
 	adaptiveManager *AdaptiveConcurrencyManager
 	// 批处理作业管理
-	batchJobs       map[string]*BatchProcessingJob
-	batchJobsMu     sync.RWMutex
+	batchJobs   map[string]*BatchProcessingJob
+	batchJobsMu sync.RWMutex
 }
 
 // CPUMonitor CPU监控器
@@ -132,8 +132,8 @@ type AdaptiveConcurrencyManager struct {
 	mu                 sync.RWMutex
 }
 
-// ProcessorMetrics 处理器指标
-type ProcessorMetrics struct {
+// PipelineMetrics 管道处理指标
+type PipelineMetrics struct {
 	TotalPipelines     int           `json:"total_pipelines"`
 	CompletedPipelines int           `json:"completed_pipelines"`
 	FailedPipelines    int           `json:"failed_pipelines"`
@@ -235,10 +235,10 @@ type BatchProcessingJob struct {
 	Priority    int
 	Callback    func(*BatchResult)
 	CreatedAt   time.Time
-	Status      string    // pending, running, completed, failed
+	Status      string // pending, running, completed, failed
 	StartedAt   time.Time
 	CompletedAt time.Time
-	PipelineIDs []string  // 关联的管道ID列表
+	PipelineIDs []string // 关联的管道ID列表
 	mu          sync.RWMutex
 }
 
@@ -254,7 +254,7 @@ type BatchResult struct {
 }
 
 // NewParallelProcessor 创建并行处理器
-func NewParallelProcessor(resourceManager *core.UnifiedResourceManager) *ParallelProcessor {
+func NewParallelProcessor(resourceManager *core.ResourceManager) *ParallelProcessor {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// 获取CPU核心数
@@ -291,7 +291,7 @@ func NewParallelProcessor(resourceManager *core.UnifiedResourceManager) *Paralle
 		cancel:          cancel,
 		pipelines:       make(map[string]*ProcessingPipeline),
 		batchJobs:       make(map[string]*BatchProcessingJob),
-		metrics: &ProcessorMetrics{
+		metrics: &PipelineMetrics{
 			StartTime: time.Now(),
 		},
 	}
@@ -1594,13 +1594,13 @@ func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callbac
 // executeBatch 执行批处理
 func (pp *ParallelProcessor) executeBatch(batchJob *BatchProcessingJob) {
 	start := time.Now()
-	
+
 	// 更新批处理作业状态
 	batchJob.mu.Lock()
 	batchJob.Status = "running"
 	batchJob.StartedAt = start
 	batchJob.mu.Unlock()
-	
+
 	result := &BatchResult{
 		JobID:       batchJob.ID,
 		TotalVideos: len(batchJob.Videos),
@@ -1622,7 +1622,7 @@ func (pp *ParallelProcessor) executeBatch(batchJob *BatchProcessingJob) {
 	}
 
 	result.Duration = time.Since(start)
-	
+
 	// 更新批处理作业完成状态
 	batchJob.mu.Lock()
 	if result.Failed > 0 {
@@ -1632,7 +1632,7 @@ func (pp *ParallelProcessor) executeBatch(batchJob *BatchProcessingJob) {
 	}
 	batchJob.CompletedAt = time.Now()
 	batchJob.mu.Unlock()
-	
+
 	log.Printf("Batch job %s completed: %d/%d successful", batchJob.ID, result.Completed, result.TotalVideos)
 
 	if batchJob.Callback != nil {
@@ -1874,8 +1874,8 @@ func (pp *ParallelProcessor) CleanupCompletedPipelines() {
 	}
 }
 
-// GetProcessorMetrics 获取处理器指标
-func (pp *ParallelProcessor) GetProcessorMetrics() *ProcessorMetrics {
+// GetPipelineMetrics 获取管道处理指标
+func (pp *ParallelProcessor) GetPipelineMetrics() *PipelineMetrics {
 	pp.mu.RLock()
 	defer pp.mu.RUnlock()
 	return pp.metrics
@@ -1993,7 +1993,7 @@ func (pp *ParallelProcessor) GetAdaptiveConcurrencyMetrics() map[string]interfac
 // GetComprehensiveMetrics 获取综合性能指标
 func (pp *ParallelProcessor) GetComprehensiveMetrics() map[string]interface{} {
 	return map[string]interface{}{
-		"processor":            pp.GetProcessorMetrics(),
+		"processor":            pp.GetPipelineMetrics(),
 		"cpu":                  pp.GetCPUMetrics(),
 		"worker_pools":         pp.GetWorkerPoolMetrics(),
 		"load_balancer":        pp.GetLoadBalancerMetrics(),
@@ -2007,23 +2007,23 @@ func (pp *ParallelProcessor) GetBatchJobStatus(jobID string) map[string]interfac
 	pp.batchJobsMu.RLock()
 	batchJob, exists := pp.batchJobs[jobID]
 	pp.batchJobsMu.RUnlock()
-	
+
 	if !exists {
 		return map[string]interface{}{
-			"error": "batch job not found",
+			"error":  "batch job not found",
 			"job_id": jobID,
 		}
 	}
-	
+
 	batchJob.mu.RLock()
 	defer batchJob.mu.RUnlock()
-	
+
 	// 获取关联管道的状态
 	pipelineStatuses := make(map[string]interface{})
 	for _, pipelineID := range batchJob.PipelineIDs {
 		pipelineStatuses[pipelineID] = pp.GetPipelineStatus(pipelineID)
 	}
-	
+
 	// 计算进度
 	var completedPipelines, failedPipelines, runningPipelines int
 	for _, status := range pipelineStatuses {
@@ -2040,13 +2040,13 @@ func (pp *ParallelProcessor) GetBatchJobStatus(jobID string) map[string]interfac
 			}
 		}
 	}
-	
+
 	totalPipelines := len(batchJob.PipelineIDs)
 	progress := 0.0
 	if totalPipelines > 0 {
 		progress = float64(completedPipelines) / float64(totalPipelines)
 	}
-	
+
 	duration := time.Duration(0)
 	if !batchJob.StartedAt.IsZero() {
 		if !batchJob.CompletedAt.IsZero() {
@@ -2055,24 +2055,24 @@ func (pp *ParallelProcessor) GetBatchJobStatus(jobID string) map[string]interfac
 			duration = time.Since(batchJob.StartedAt)
 		}
 	}
-	
+
 	return map[string]interface{}{
-		"job_id":             batchJob.ID,
-		"status":             batchJob.Status,
-		"total_videos":       len(batchJob.Videos),
-		"batch_size":         batchJob.BatchSize,
-		"priority":           batchJob.Priority,
-		"created_at":         batchJob.CreatedAt,
-		"started_at":         batchJob.StartedAt,
-		"completed_at":       batchJob.CompletedAt,
-		"duration":           duration,
-		"progress":           progress,
-		"total_pipelines":    totalPipelines,
+		"job_id":              batchJob.ID,
+		"status":              batchJob.Status,
+		"total_videos":        len(batchJob.Videos),
+		"batch_size":          batchJob.BatchSize,
+		"priority":            batchJob.Priority,
+		"created_at":          batchJob.CreatedAt,
+		"started_at":          batchJob.StartedAt,
+		"completed_at":        batchJob.CompletedAt,
+		"duration":            duration,
+		"progress":            progress,
+		"total_pipelines":     totalPipelines,
 		"completed_pipelines": completedPipelines,
-		"failed_pipelines":   failedPipelines,
-		"running_pipelines":  runningPipelines,
-		"pipeline_ids":       batchJob.PipelineIDs,
-		"pipeline_statuses":  pipelineStatuses,
+		"failed_pipelines":    failedPipelines,
+		"running_pipelines":   runningPipelines,
+		"pipeline_ids":        batchJob.PipelineIDs,
+		"pipeline_statuses":   pipelineStatuses,
 	}
 }
 
@@ -2080,12 +2080,12 @@ func (pp *ParallelProcessor) GetBatchJobStatus(jobID string) map[string]interfac
 func (pp *ParallelProcessor) GetAllBatchJobs() map[string]interface{} {
 	pp.batchJobsMu.RLock()
 	defer pp.batchJobsMu.RUnlock()
-	
+
 	jobs := make(map[string]interface{})
 	for jobID := range pp.batchJobs {
 		jobs[jobID] = pp.GetBatchJobStatus(jobID)
 	}
-	
+
 	return map[string]interface{}{
 		"total_jobs": len(pp.batchJobs),
 		"jobs":       jobs,
@@ -2096,7 +2096,7 @@ func (pp *ParallelProcessor) GetAllBatchJobs() map[string]interface{} {
 func (pp *ParallelProcessor) GetBatchJobsByStatus(status string) map[string]interface{} {
 	pp.batchJobsMu.RLock()
 	defer pp.batchJobsMu.RUnlock()
-	
+
 	matchingJobs := make(map[string]interface{})
 	for jobID, batchJob := range pp.batchJobs {
 		batchJob.mu.RLock()
@@ -2105,7 +2105,7 @@ func (pp *ParallelProcessor) GetBatchJobsByStatus(status string) map[string]inte
 		}
 		batchJob.mu.RUnlock()
 	}
-	
+
 	return map[string]interface{}{
 		"status":     status,
 		"total_jobs": len(matchingJobs),

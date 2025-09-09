@@ -12,13 +12,13 @@ import (
 
 // MonitoringHandlers 监控相关的HTTP处理器
 type MonitoringHandlers struct {
-	resourceManager *core.UnifiedResourceManager
+	resourceManager *core.ResourceManager
 	processor       *processors.ParallelProcessor
 	vectorStore     *storage.EnhancedVectorStore
 }
 
 // NewMonitoringHandlers 创建监控处理器实例
-func NewMonitoringHandlers(rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor, vs *storage.EnhancedVectorStore) *MonitoringHandlers {
+func NewMonitoringHandlers(rm *core.ResourceManager, pp *processors.ParallelProcessor, vs *storage.EnhancedVectorStore) *MonitoringHandlers {
 	return &MonitoringHandlers{
 		resourceManager: rm,
 		processor:       pp,
@@ -64,11 +64,11 @@ func (h *MonitoringHandlers) StatsHandler(w http.ResponseWriter, r *http.Request
 
 	stats := map[string]interface{}{
 		"memory": map[string]interface{}{
-			"alloc":         m.Alloc,
-			"total_alloc":   m.TotalAlloc,
-			"sys":           m.Sys,
-			"num_gc":        m.NumGC,
-			"heap_objects":  m.HeapObjects,
+			"alloc":        m.Alloc,
+			"total_alloc":  m.TotalAlloc,
+			"sys":          m.Sys,
+			"num_gc":       m.NumGC,
+			"heap_objects": m.HeapObjects,
 		},
 		"runtime": map[string]interface{}{
 			"goroutines": runtime.NumGoroutine(),
@@ -81,7 +81,7 @@ func (h *MonitoringHandlers) StatsHandler(w http.ResponseWriter, r *http.Request
 	// 添加处理器统计信息
 	if h.processor != nil {
 		stats["processor"] = map[string]interface{}{
-			"active_jobs": 0, // 这里需要从processor获取实际数据
+			"active_jobs":     0, // 这里需要从processor获取实际数据
 			"total_processed": 0,
 		}
 	}
@@ -103,13 +103,13 @@ func (h *MonitoringHandlers) DiagnosticsHandler(w http.ResponseWriter, r *http.R
 		},
 		"health_checks": []map[string]interface{}{
 			{
-				"name":   "memory_usage",
-				"status": "ok",
+				"name":    "memory_usage",
+				"status":  "ok",
 				"details": "Memory usage within normal limits",
 			},
 			{
-				"name":   "disk_space",
-				"status": "ok",
+				"name":    "disk_space",
+				"status":  "ok",
 				"details": "Sufficient disk space available",
 			},
 		},

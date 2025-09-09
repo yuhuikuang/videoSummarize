@@ -12,6 +12,7 @@ import (
 	sortpkg "sort"
 	"strings"
 
+	"videoSummarize/config"
 	"videoSummarize/core"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -436,7 +437,7 @@ func (v VolcengineSummarizer) Summarize(segments []core.Segment, frames []core.F
 	sortpkg.Slice(frames, func(i, j int) bool { return frames[i].TimestampSec < frames[j].TimestampSec })
 	items := make([]core.Item, 0, len(segments))
 
-	config, err := loadConfig()
+	cfg, err := config.LoadConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to load config: %v", err)
 	}
@@ -458,7 +459,7 @@ func (v VolcengineSummarizer) Summarize(segments []core.Segment, frames []core.F
 		}
 
 		// Generate summary using Volcengine API
-		summary, err := v.generateSummaryForSegment(s.Text, config.ChatModel)
+		summary, err := v.generateSummaryForSegment(s.Text, cfg.ChatModel)
 		if err != nil {
 			// Fallback to simple summary if API fails
 			summary = fmt.Sprintf("Summary: %s", truncateWords(s.Text, 20))
@@ -499,15 +500,15 @@ func (v VolcengineSummarizer) generateSummaryForSegment(text, model string) (str
 }
 
 func pickSummaryProvider() Summarizer {
-	config, err := loadConfig()
-	if err != nil || !config.HasValidAPI() {
+	cfg, err := config.LoadConfig()
+	if err != nil || !cfg.HasValidAPI() {
 		fmt.Println("Warning: No valid API configuration found, using smart summarizer")
 		return SmartSummarizer{}
 	}
 
-	clientConfig := openai.DefaultConfig(config.APIKey)
-	if config.BaseURL != "" {
-		clientConfig.BaseURL = config.BaseURL
+	clientConfig := openai.DefaultConfig(cfg.APIKey)
+	if cfg.BaseURL != "" {
+		clientConfig.BaseURL = cfg.BaseURL
 	}
 	cli := openai.NewClientWithConfig(clientConfig)
 

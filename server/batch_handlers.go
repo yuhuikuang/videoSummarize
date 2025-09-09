@@ -12,12 +12,12 @@ import (
 
 // BatchHandlers 批处理相关的HTTP处理器
 type BatchHandlers struct {
-	resourceManager *core.UnifiedResourceManager
+	resourceManager *core.ResourceManager
 	processor       *processors.ParallelProcessor
 }
 
 // NewBatchHandlers 创建批处理处理器实例
-func NewBatchHandlers(rm *core.UnifiedResourceManager, pp *processors.ParallelProcessor) *BatchHandlers {
+func NewBatchHandlers(rm *core.ResourceManager, pp *processors.ParallelProcessor) *BatchHandlers {
 	return &BatchHandlers{
 		resourceManager: rm,
 		processor:       pp,
@@ -37,7 +37,7 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 	var batchRequest struct {
 		Videos   []string               `json:"videos"`
 		Options  map[string]interface{} `json:"options"`
-		Priority int                   `json:"priority"`
+		Priority int                    `json:"priority"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&batchRequest); err != nil {
@@ -67,11 +67,11 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 
 	// 创建批处理任务ID
 	batchID := generateBatchID()
-	
+
 	// 提交批处理任务给processors.ParallelProcessor
 	err := h.processor.ProcessBatch(batchRequest.Videos, batchRequest.Priority, func(result *processors.BatchResult) {
 		// 批处理完成回调
-		log.Printf("Batch %s completed: %d/%d videos processed successfully", 
+		log.Printf("Batch %s completed: %d/%d videos processed successfully",
 			result.JobID, result.Completed, result.TotalVideos)
 	})
 
@@ -107,14 +107,14 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 	batchID := r.URL.Query().Get("batch_id")
 	jobID := r.URL.Query().Get("job_id")
 	status := r.URL.Query().Get("status")
-	
+
 	// 统一状态视图接口
 	if pipelineID != "" {
 		// 返回特定管道的状态
 		pipelineStatus := h.processor.GetPipelineStatus(pipelineID)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"type": "pipeline",
-			"data": pipelineStatus,
+			"type":      "pipeline",
+			"data":      pipelineStatus,
 			"timestamp": time.Now().Unix(),
 		})
 		return
@@ -124,8 +124,8 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 		// 通过JobID查询管道状态
 		pipelineStatus := h.processor.GetPipelineStatusByJobID(jobID)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"type": "pipeline_by_job",
-			"data": pipelineStatus,
+			"type":      "pipeline_by_job",
+			"data":      pipelineStatus,
 			"timestamp": time.Now().Unix(),
 		})
 		return
@@ -135,8 +135,8 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 		// 返回特定批处理作业的状态
 		batchStatus := h.processor.GetBatchJobStatus(batchID)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"type": "batch_job",
-			"data": batchStatus,
+			"type":      "batch_job",
+			"data":      batchStatus,
 			"timestamp": time.Now().Unix(),
 		})
 		return
@@ -146,11 +146,11 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 		// 按状态筛选管道或批处理作业
 		pipelinesByStatus := h.processor.GetPipelinesByStatus(status)
 		batchJobsByStatus := h.processor.GetBatchJobsByStatus(status)
-		
+
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"type": "status_filter",
 			"data": map[string]interface{}{
-				"pipelines": pipelinesByStatus,
+				"pipelines":  pipelinesByStatus,
 				"batch_jobs": batchJobsByStatus,
 			},
 			"timestamp": time.Now().Unix(),
@@ -160,30 +160,30 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 
 	// 返回统一状态概览
 	processorStatus := h.processor.GetProcessorStatus()
-	metrics := h.processor.GetProcessorMetrics()
+	metrics := h.processor.GetPipelineMetrics()
 	allBatchJobs := h.processor.GetAllBatchJobs()
-	
+
 	unifiedStatus := map[string]interface{}{
 		"processor": map[string]interface{}{
-			"active_pipelines":     processorStatus["active_pipelines"],
-			"queued_jobs":          processorStatus["queued_jobs"],
-			"processing_jobs":      processorStatus["processing_jobs"],
-			"completed_jobs":       metrics.CompletedPipelines,
-			"failed_jobs":          metrics.FailedPipelines,
-			"total_pipelines":      metrics.TotalPipelines,
-			"running_pipelines":    metrics.RunningPipelines,
-			"avg_processing_time":  metrics.AvgProcessingTime.String(),
-			"throughput":           metrics.Throughput,
-			"start_time":           metrics.StartTime.Unix(),
-			"last_update":          metrics.LastUpdate.Unix(),
+			"active_pipelines":    processorStatus["active_pipelines"],
+			"queued_jobs":         processorStatus["queued_jobs"],
+			"processing_jobs":     processorStatus["processing_jobs"],
+			"completed_jobs":      metrics.CompletedPipelines,
+			"failed_jobs":         metrics.FailedPipelines,
+			"total_pipelines":     metrics.TotalPipelines,
+			"running_pipelines":   metrics.RunningPipelines,
+			"avg_processing_time": metrics.AvgProcessingTime.String(),
+			"throughput":          metrics.Throughput,
+			"start_time":          metrics.StartTime.Unix(),
+			"last_update":         metrics.LastUpdate.Unix(),
 		},
 		"batch_jobs": allBatchJobs,
-		"timestamp": time.Now().Unix(),
+		"timestamp":  time.Now().Unix(),
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"type": "unified_overview",
-		"data": unifiedStatus,
+		"type":      "unified_overview",
+		"data":      unifiedStatus,
 		"timestamp": time.Now().Unix(),
 	})
 }
@@ -201,7 +201,7 @@ func (h *BatchHandlers) UnifiedStatusHandler(w http.ResponseWriter, r *http.Requ
 
 	// 获取所有状态信息
 	processorStatus := h.processor.GetProcessorStatus()
-	metrics := h.processor.GetProcessorMetrics()
+	metrics := h.processor.GetPipelineMetrics()
 	allBatchJobs := h.processor.GetAllBatchJobs()
 	resourceStatus := h.resourceManager.GetResourceStatus()
 
@@ -220,40 +220,40 @@ func (h *BatchHandlers) UnifiedStatusHandler(w http.ResponseWriter, r *http.Requ
 	unifiedStatus := map[string]interface{}{
 		"system": map[string]interface{}{
 			"timestamp": time.Now().Unix(),
-			"uptime": time.Since(metrics.StartTime).String(),
-			"status": "running",
+			"uptime":    time.Since(metrics.StartTime).String(),
+			"status":    "running",
 		},
 		"processor": map[string]interface{}{
-			"active_pipelines":     processorStatus["active_pipelines"],
-			"queued_jobs":          processorStatus["queued_jobs"],
-			"processing_jobs":      processorStatus["processing_jobs"],
-			"total_pipelines":      metrics.TotalPipelines,
-			"running_pipelines":    metrics.RunningPipelines,
-			"completed_pipelines":  metrics.CompletedPipelines,
-			"failed_pipelines":     metrics.FailedPipelines,
-			"avg_processing_time":  metrics.AvgProcessingTime.String(),
-			"throughput":           metrics.Throughput,
-			"last_update":          metrics.LastUpdate.Unix(),
+			"active_pipelines":    processorStatus["active_pipelines"],
+			"queued_jobs":         processorStatus["queued_jobs"],
+			"processing_jobs":     processorStatus["processing_jobs"],
+			"total_pipelines":     metrics.TotalPipelines,
+			"running_pipelines":   metrics.RunningPipelines,
+			"completed_pipelines": metrics.CompletedPipelines,
+			"failed_pipelines":    metrics.FailedPipelines,
+			"avg_processing_time": metrics.AvgProcessingTime.String(),
+			"throughput":          metrics.Throughput,
+			"last_update":         metrics.LastUpdate.Unix(),
 		},
 		"batch_jobs": map[string]interface{}{
-			"total": len(allBatchJobs),
-			"pending": len(pendingBatchJobs),
-			"running": len(runningBatchJobs),
+			"total":     len(allBatchJobs),
+			"pending":   len(pendingBatchJobs),
+			"running":   len(runningBatchJobs),
 			"completed": len(completedBatchJobs),
-			"failed": len(failedBatchJobs),
-			"jobs": allBatchJobs,
+			"failed":    len(failedBatchJobs),
+			"jobs":      allBatchJobs,
 		},
 		"pipelines": map[string]interface{}{
-			"running": runningPipelines,
+			"running":   runningPipelines,
 			"completed": completedPipelines,
-			"failed": failedPipelines,
+			"failed":    failedPipelines,
 		},
 		"resources": resourceStatus,
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"type": "unified_status",
-		"data": unifiedStatus,
+		"type":      "unified_status",
+		"data":      unifiedStatus,
 		"timestamp": time.Now().Unix(),
 	})
 }
@@ -277,12 +277,12 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 		if h.resourceManager != nil {
 			resourceStatus = h.resourceManager.GetResourceStatus()
 		}
-		
+
 		config := map[string]interface{}{
-			"processor_config":     processorStatus,
-			"resource_status":      resourceStatus,
+			"processor_config":      processorStatus,
+			"resource_status":       resourceStatus,
 			"comprehensive_metrics": h.processor.GetComprehensiveMetrics(),
-			"timestamp":            time.Now().Unix(),
+			"timestamp":             time.Now().Unix(),
 		}
 		writeJSON(w, http.StatusOK, config)
 
@@ -293,7 +293,7 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 			QueueSize         int `json:"queue_size"`
 			WorkerPoolSize    int `json:"worker_pool_size"`
 		}
-		
+
 		if err := json.NewDecoder(r.Body).Decode(&configUpdate); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"error":   "Invalid configuration",
@@ -330,7 +330,7 @@ func (h *BatchHandlers) BatchMetricsHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	// 从processors.ParallelProcessor获取真实指标
-	processorMetrics := h.processor.GetProcessorMetrics()
+	processorMetrics := h.processor.GetPipelineMetrics()
 	cpuMetrics := h.processor.GetCPUMetrics()
 	workerPoolMetrics := h.processor.GetWorkerPoolMetrics()
 	loadBalancerMetrics := h.processor.GetLoadBalancerMetrics()
@@ -345,22 +345,22 @@ func (h *BatchHandlers) BatchMetricsHandler(w http.ResponseWriter, r *http.Reque
 
 	metrics := map[string]interface{}{
 		"performance": map[string]interface{}{
-			"total_pipelines":      processorMetrics.TotalPipelines,
-			"completed_pipelines":  processorMetrics.CompletedPipelines,
-			"failed_pipelines":     processorMetrics.FailedPipelines,
-			"running_pipelines":    processorMetrics.RunningPipelines,
-			"avg_processing_time":  processorMetrics.AvgProcessingTime.String(),
-			"throughput":           processorMetrics.Throughput,
-			"success_rate":         strconv.FormatFloat(successRate, 'f', 2, 64) + "%",
-			"start_time":           processorMetrics.StartTime.Unix(),
-			"last_update":          processorMetrics.LastUpdate.Unix(),
+			"total_pipelines":     processorMetrics.TotalPipelines,
+			"completed_pipelines": processorMetrics.CompletedPipelines,
+			"failed_pipelines":    processorMetrics.FailedPipelines,
+			"running_pipelines":   processorMetrics.RunningPipelines,
+			"avg_processing_time": processorMetrics.AvgProcessingTime.String(),
+			"throughput":          processorMetrics.Throughput,
+			"success_rate":        strconv.FormatFloat(successRate, 'f', 2, 64) + "%",
+			"start_time":          processorMetrics.StartTime.Unix(),
+			"last_update":         processorMetrics.LastUpdate.Unix(),
 		},
-		"cpu_metrics":             cpuMetrics,
-		"worker_pool_metrics":     workerPoolMetrics,
-		"load_balancer_metrics":   loadBalancerMetrics,
-		"adaptive_metrics":        adaptiveMetrics,
-		"comprehensive_metrics":   comprehensiveMetrics,
-		"timestamp":               time.Now().Unix(),
+		"cpu_metrics":           cpuMetrics,
+		"worker_pool_metrics":   workerPoolMetrics,
+		"load_balancer_metrics": loadBalancerMetrics,
+		"adaptive_metrics":      adaptiveMetrics,
+		"comprehensive_metrics": comprehensiveMetrics,
+		"timestamp":             time.Now().Unix(),
 	}
 
 	// 如果有资源管理器，添加资源使用情况

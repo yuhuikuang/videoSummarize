@@ -258,7 +258,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if storage.GlobalStore != nil {
-		config, configErr := loadConfig()
+		config, configErr := config.LoadConfig()
 		if configErr != nil || !config.HasValidAPI() {
 			if configErr == nil {
 				printConfigInstructions()
