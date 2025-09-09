@@ -65,11 +65,8 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// 创建批处理任务ID
-	batchID := generateBatchID()
-
-	// 提交批处理任务给processors.ParallelProcessor
-	err := h.processor.ProcessBatch(batchRequest.Videos, batchRequest.Priority, func(result *processors.BatchResult) {
+	// 提交批处理任务给processors.ParallelProcessor，获取批处理ID
+	batchID, err := h.processor.ProcessBatch(batchRequest.Videos, batchRequest.Priority, func(result *processors.BatchResult) {
 		// 批处理完成回调
 		log.Printf("Batch %s completed: %d/%d videos processed successfully",
 			result.JobID, result.Completed, result.TotalVideos)
@@ -374,4 +371,125 @@ func (h *BatchHandlers) BatchMetricsHandler(w http.ResponseWriter, r *http.Reque
 // generateBatchID 生成批处理ID
 func generateBatchID() string {
 	return "batch_" + time.Now().Format("20060102_150405")
+}
+
+// CancelHandler 取消流水线/作业/批处理关联的流水线
+func (h *BatchHandlers) CancelHandler(w http.ResponseWriter, r *http.Request) {
+	// 检查处理器是否可用
+	if h.processor == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":   "Processor unavailable",
+			"message": "Parallel processor is not initialized",
+		})
+		return
+	}
+
+	// 允许 GET/POST 两种方式传参
+	var req struct {
+		PipelineID string `json:"pipeline_id"`
+		JobID      string `json:"job_id"`
+		BatchID    string `json:"batch_id"`
+	}
+
+	if r.Method == http.MethodPost {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	} else if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+			"error":   "Method not allowed",
+			"message": "Only GET and POST methods are supported",
+		})
+		return
+	}
+
+	q := r.URL.Query()
+	if req.PipelineID == "" {
+		req.PipelineID = q.Get("pipeline_id")
+	}
+	if req.JobID == "" {
+		req.JobID = q.Get("job_id")
+	}
+	if req.BatchID == "" {
+		req.BatchID = q.Get("batch_id")
+	}
+
+	var pipelineIDs []string
+	target := ""
+	targetID := ""
+
+	if req.PipelineID != "" {
+		pipelineIDs = []string{req.PipelineID}
+		target = "pipeline"
+		targetID = req.PipelineID
+	} else if req.JobID != "" {
+		status := h.processor.GetPipelineStatusByJobID(req.JobID)
+		if status != nil {
+			// 如果返回包含 error，说明未找到对应流水线
+			if _, hasErr := status["error"]; !hasErr {
+				if id, ok := status["id"].(string); ok && id != "" {
+					pipelineIDs = append(pipelineIDs, id)
+				}
+			}
+		}
+		target = "job"
+		targetID = req.JobID
+	} else if req.BatchID != "" {
+		bstatus := h.processor.GetBatchJobStatus(req.BatchID)
+		if bstatus != nil {
+			if ids, ok := bstatus["pipeline_ids"]; ok {
+				switch v := ids.(type) {
+				case []string:
+					pipelineIDs = append(pipelineIDs, v...)
+				case []interface{}:
+					for _, elem := range v {
+						if s, ok := elem.(string); ok {
+							pipelineIDs = append(pipelineIDs, s)
+						}
+					}
+				}
+			}
+		}
+		target = "batch"
+		targetID = req.BatchID
+	} else {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":   "Missing parameters",
+			"message": "One of pipeline_id, job_id, or batch_id must be provided",
+			"timestamp": time.Now().Unix(),
+		})
+		return
+	}
+
+	if len(pipelineIDs) == 0 {
+		writeJSON(w, http.StatusNotFound, map[string]interface{}{
+			"error":     "No pipelines found to cancel",
+			"target":    target,
+			"target_id": targetID,
+			"timestamp": time.Now().Unix(),
+		})
+		return
+	}
+
+	results := make([]map[string]interface{}, 0, len(pipelineIDs))
+	success := 0
+	for _, pid := range pipelineIDs {
+		ok, msg := h.processor.CancelPipeline(pid)
+		if ok {
+			success++
+		}
+		results = append(results, map[string]interface{}{
+			"pipeline_id": pid,
+			"cancelled":   ok,
+			"message":     msg,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":    "Cancel request processed",
+		"target":     target,
+		"target_id":  targetID,
+		"total":      len(pipelineIDs),
+		"cancelled":  success,
+		"results":    results,
+		"timestamp":  time.Now().Unix(),
+	})
 }

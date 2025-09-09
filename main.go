@@ -38,6 +38,11 @@ func main() {
 
 	log.Printf("系统初始化成功")
 
+	// 初始化 handlers 包中的全局并行处理器，避免 /process-parallel 触发 nil 引用
+	// handlers.InitProcessor(result.ResourceManager)
+	// 改为注入同一个并行处理器实例，确保 /process-parallel 与 /pipeline-status 使用同一处理器
+	handlers.SetGlobalProcessor(result.ParallelProcessor)
+
 	// 创建关键点处理器
 	keypointHandlers, err := server.NewKeypointHandlers()
 	if err != nil {
@@ -79,7 +84,7 @@ func main() {
 	http.HandleFunc("/unified-status", batchHandlers.UnifiedStatusHandler)
 	http.HandleFunc("/batch-config", batchHandlers.BatchConfigHandler)
 	http.HandleFunc("/batch-metrics", batchHandlers.BatchMetricsHandler)
-
+	http.HandleFunc("/cancel", batchHandlers.CancelHandler)
 	// 向量存储路由
 	http.HandleFunc("/vector-rebuild", vectorHandlers.VectorRebuildHandler)
 	http.HandleFunc("/vector-status", vectorHandlers.VectorStatusHandler)

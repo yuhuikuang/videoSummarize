@@ -91,15 +91,17 @@ func testProcessBatch(t *testing.T, processor *processors.ParallelProcessor, vid
 		resultChan <- result
 	}
 
-	err := processor.ProcessBatch(videos, 3, callback)
+	batchID, err := processor.ProcessBatch(videos, 3, callback)
 	if err != nil {
 		t.Fatalf("Failed to start batch processing: %v", err)
 	}
+	log.Printf("Started batch processing with ID: %s", batchID)
 
 	// 等待批处理完成
 	select {
 	case result := <-resultChan:
 		log.Printf("Batch processing completed:")
+		log.Printf("  BatchID: %s", result.JobID)
 		log.Printf("  Total: %d", result.TotalVideos)
 		log.Printf("  Completed: %d", result.Completed)
 		log.Printf("  Failed: %d", result.Failed)

@@ -1,8 +1,6 @@
 package handlers
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +12,7 @@ import (
 	"videoSummarize/core"
 	"videoSummarize/processors"
 	"videoSummarize/storage"
+	"videoSummarize/utils"
 )
 
 // 类型定义
@@ -28,11 +27,12 @@ var (
 // 全局资源管理器
 var enhancedResourceManager *core.ResourceManager
 
+// 服务启动时间
+var startTime = time.Now()
+
 // 辅助函数
 func newID() string {
-	bytes := make([]byte, 16)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
+	return utils.NewID()
 }
 
 func writeJSON(w http.ResponseWriter, data interface{}) {
@@ -50,6 +50,11 @@ func writeJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}
 func InitProcessor(resourceManager *core.ResourceManager) {
 	// 使用processors包的ParallelProcessor
 	globalProcessor = processors.NewParallelProcessor(resourceManager)
+}
+
+// 新增：允许注入已存在的并行处理器实例，确保各模块共享同一个处理器
+func SetGlobalProcessor(pp *processors.ParallelProcessor) {
+	globalProcessor = pp
 }
 
 // enhancedVectorStore 全局变量
@@ -114,11 +119,8 @@ func ProcessParallelHandler(w http.ResponseWriter, r *http.Request) {
 		req.Priority = 5 // 默认优先级
 	}
 
-	// 生成作业ID
-	jobID := newID()
-
-	// 提交并行处理
-	pipeline, err := globalProcessor.ProcessVideoParallel(req.VideoPath, jobID, req.Priority)
+	// 提交并行处理（尊重客户端传入的 JobID 或生成的默认值）
+	pipeline, err := globalProcessor.ProcessVideoParallel(req.VideoPath, req.JobID, req.Priority)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Processing failed: %v", err), http.StatusInternalServerError)
 		return
@@ -128,7 +130,7 @@ func ProcessParallelHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,
-		"job_id":      jobID,
+		"job_id":      req.JobID,
 		"pipeline_id": pipeline.ID,
 		"status":      pipeline.Status,
 		"message":     "Video processing started",
@@ -163,18 +165,14 @@ func ProcessBatchHandler(w http.ResponseWriter, r *http.Request) {
 		req.Priority = 5 // 默认优先级
 	}
 
-	if req.JobID == "" {
-		req.JobID = newID()
-	}
-
 	// 检查并行处理器是否可用
 	if globalProcessor == nil {
 		http.Error(w, "Parallel processor not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	// 提交批处理任务
-	err := globalProcessor.ProcessBatch(req.Videos, req.Priority, func(result *processors.BatchResult) {
+	// 提交批处理任务，获取批处理ID
+	batchID, err := globalProcessor.ProcessBatch(req.Videos, req.Priority, func(result *processors.BatchResult) {
 		log.Printf("Batch job %s completed: %d/%d successful", result.JobID, result.Completed, result.TotalVideos)
 	})
 
@@ -185,7 +183,7 @@ func ProcessBatchHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"job_id":       req.JobID,
+		"batch_id":     batchID,
 		"total_videos": len(req.Videos),
 		"priority":     req.Priority,
 		"status":       "submitted",
@@ -395,7 +393,43 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 检查增强向量存储是否可用
 	if enhancedVectorStore == nil {
-		http.Error(w, "Enhanced vector store not available", http.StatusServiceUnavailable)
+		// 回退到传统向量存储
+		store := globalStore
+		if store == nil && storage.GlobalStore != nil {
+			store = storage.GlobalStore
+		}
+		if store == nil {
+			http.Error(w, "Vector store not available", http.StatusServiceUnavailable)
+			return
+		}
+		coreHits := store.Search(req.JobID, req.Query, req.TopK)
+		results := make([]Hit, len(coreHits))
+		for i, h := range coreHits {
+			results[i] = Hit{
+				ID:      h.SegmentID,
+				Score:   h.Score,
+				Content: h.Text,
+				Metadata: map[string]interface{}{
+					"video_id":   h.VideoID,
+					"job_id":     h.JobID,
+					"start":      h.Start,
+					"end":        h.End,
+					"summary":    h.Summary,
+					"frame_path": h.FramePath,
+				},
+			}
+		}
+		response := map[string]interface{}{
+			"job_id":      req.JobID,
+			"query":       req.Query,
+			"strategy":    "traditional",
+			"top_k":       req.TopK,
+			"results":     results,
+			"total":       len(results),
+			"duration_ms": 0,
+			"timestamp":   time.Now(),
+		}
+		writeJSONWithStatus(w, http.StatusOK, response)
 		return
 	}
 
@@ -615,7 +649,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 	// 添加系统指标
 	metrics["timestamp"] = time.Now()
-	metrics["uptime"] = time.Since(time.Now()) // 这里应该是服务启动时间
+	metrics["uptime"] = time.Since(startTime)
 
 	writeJSONWithStatus(w, http.StatusOK, metrics)
 }
@@ -1018,10 +1052,34 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		// 回退到传统搜索
-		// hits = globalStore.Search(req.JobID, req.Query, req.TopK)
+		store := globalStore
+		if store == nil && storage.GlobalStore != nil {
+			store = storage.GlobalStore
+		}
+		if store == nil {
+			http.Error(w, "Vector store not available", http.StatusServiceUnavailable)
+			return
+		}
+		coreHits := store.Search(req.JobID, req.Query, req.TopK)
+		hits = make([]Hit, len(coreHits))
+		for i, h := range coreHits {
+			hits[i] = Hit{
+				ID:      h.SegmentID,
+				Score:   h.Score,
+				Content: h.Text,
+				Metadata: map[string]interface{}{
+					"video_id":   h.VideoID,
+					"job_id":     h.JobID,
+					"start":      h.Start,
+					"end":        h.End,
+					"summary":    h.Summary,
+					"frame_path": h.FramePath,
+				},
+			}
+		}
 		strategyUsed = "traditional"
 	}
-
+	
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Search failed: %v", err), http.StatusInternalServerError)
 		return

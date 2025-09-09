@@ -1566,9 +1566,9 @@ func (pp *ParallelProcessor) updateMetrics() {
 }
 
 // ProcessBatch 批处理视频
-func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callback func(*BatchResult)) error {
+func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callback func(*BatchResult)) (string, error) {
 	if !pp.config.EnableBatchProcessing {
-		return fmt.Errorf("batch processing is disabled")
+		return "", fmt.Errorf("batch processing is disabled")
 	}
 
 	batchJob := &BatchProcessingJob{
@@ -1588,7 +1588,7 @@ func (pp *ParallelProcessor) ProcessBatch(videos []string, priority int, callbac
 	pp.batchJobsMu.Unlock()
 
 	go pp.executeBatch(batchJob)
-	return nil
+	return batchJob.ID, nil
 }
 
 // executeBatch 执行批处理
@@ -2111,6 +2111,43 @@ func (pp *ParallelProcessor) GetBatchJobsByStatus(status string) map[string]inte
 		"total_jobs": len(matchingJobs),
 		"jobs":       matchingJobs,
 	}
+}
+
+// CancelPipeline 取消指定ID的流水线
+func (pp *ParallelProcessor) CancelPipeline(pipelineID string) (bool, string) {
+	// 查找目标流水线
+	pp.mu.RLock()
+	pipeline, exists := pp.pipelines[pipelineID]
+	pp.mu.RUnlock()
+	if !exists || pipeline == nil {
+		return false, "pipeline not found"
+	}
+
+	// 锁定流水线并检查当前状态
+	pipeline.mu.Lock()
+	defer pipeline.mu.Unlock()
+
+	if pipeline.Status == "completed" || pipeline.Status == "failed" {
+		return false, "pipeline already finalized"
+	}
+
+	// 标记为取消并更新状态/时间
+	pipeline.Error = "canceled by user"
+	// 将状态设置为 failed（系统指标仅识别 completed/failed/running/pending）
+	pipeline.Status = "failed"
+	now := time.Now()
+	if pipeline.StartedAt.IsZero() {
+		pipeline.StartedAt = now
+	}
+	pipeline.CompletedAt = now
+	pipeline.Duration = pipeline.CompletedAt.Sub(pipeline.StartedAt)
+
+	// 触发上下文取消，驱动各阶段尽快退出
+	if pipeline.Cancel != nil {
+		pipeline.Cancel()
+	}
+
+	return true, "cancellation requested"
 }
 
 // Shutdown 关闭并行处理器
