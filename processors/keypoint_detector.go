@@ -17,12 +17,67 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+// ======== 接口定义 ========
+
+// KeypointDetectorInterface 关键点检测器接口
+type KeypointDetectorInterface interface {
+	// DetectKeypoints 检测关键时间点
+	DetectKeypoints(videoPath string, segments []core.Segment, frames []core.Frame) ([]Keypoint, error)
+	// UpdateConfig 更新配置
+	UpdateConfig(key string, value interface{})
+	// GetConfig 获取配置
+	GetConfig() *KeypointConfig
+}
+
+// TopicSegmenterInterface 主题分割器接口
+type TopicSegmenterInterface interface {
+	// SegmentTopics 进行主题分割
+	SegmentTopics(fullText string, segments []core.Segment) ([]TopicSegment, error)
+	// GetSegmentationMode 获取分割模式
+	GetSegmentationMode() KeypointDetectionMode
+}
+
+// LLMClientInterface LLM客户端接口
+type LLMClientInterface interface {
+	// CreateChatCompletion 创建聊天完成
+	CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error)
+	// GetProvider 获取提供商名称
+	GetProvider() string
+	// IsAvailable 检查是否可用
+	IsAvailable() bool
+}
+
+// ChatCompletionRequest 聊天完成请求（抽象）
+type ChatCompletionRequest struct {
+	Model       string        `json:"model"`
+	Messages    []ChatMessage `json:"messages"`
+	MaxTokens   int           `json:"max_tokens"`
+	Temperature float32       `json:"temperature"`
+}
+
+// ChatMessage 聊天消息（抽象）
+type ChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// ChatCompletionResponse 聊天完成响应（抽象）
+type ChatCompletionResponse struct {
+	Choices []ChatChoice `json:"choices"`
+}
+
+// ChatChoice 聊天选择（抽象）
+type ChatChoice struct {
+	Message ChatMessage `json:"message"`
+}
+
+// ======== 数据结构定义 ========
+
 // KeypointDetectionMode 关键时间点检测模式
 type KeypointDetectionMode int
 
 const (
-	DetectionModeMultiModal KeypointDetectionMode = iota // 多模态检测（旧模式）
-	DetectionModeLLMTopic                                // LLM主题分割（新模式）
+	DetectionModeLLMTopic = iota // LLM主题分割
 )
 
 // KeypointConfig 关键点检测配置
@@ -37,10 +92,34 @@ type KeypointConfig struct {
 	ContextWindow    int                   `json:"context_window"`    // 上下文窗口大小（句子数）
 }
 
-// KeypointDetector 关键时间点检测器
+// KeypointDetector 关键时间点检测器（默认实现）
 type KeypointDetector struct {
-	config *KeypointConfig
+	config         *KeypointConfig
+	topicSegmenter TopicSegmenterInterface
+	llmClient      LLMClientInterface
+}
+
+// ======== LLM客户端实现 ========
+
+// OpenAIClient OpenAI客户端实现
+type OpenAIClient struct {
 	client *openai.Client
+}
+
+// MockLLMClient Mock LLM客户端实现
+type MockLLMClient struct{}
+
+// ======== 主题分割器实现 ========
+
+// LLMTopicSegmenter 基于LLM的主题分割器
+type LLMTopicSegmenter struct {
+	config    *KeypointConfig
+	llmClient LLMClientInterface
+}
+
+// MockTopicSegmenter Mock主题分割器
+type MockTopicSegmenter struct {
+	config *KeypointConfig
 }
 
 // Keypoint 关键时间点
@@ -81,47 +160,57 @@ func getKeypointDetectionConfig() KeypointConfig {
 }
 
 // NewKeypointDetector 创建关键点检测器
-func NewKeypointDetector() *KeypointDetector {
+func NewKeypointDetector() KeypointDetectorInterface {
 	config := getKeypointDetectionConfig()
 
-	var client *openai.Client
+	// 创建LLM客户端
+	var llmClient LLMClientInterface
 	if config.Provider == "openai" {
-		client = createOpenAIClient()
+		llmClient = NewOpenAIClient()
+	} else {
+		llmClient = &MockLLMClient{}
+	}
+
+	// 创建主题分割器
+	var topicSegmenter TopicSegmenterInterface
+	if config.Mode == DetectionModeLLMTopic && llmClient.IsAvailable() {
+		topicSegmenter = NewLLMTopicSegmenter(&config, llmClient)
+	} else {
+		topicSegmenter = NewMockTopicSegmenter(&config)
 	}
 
 	return &KeypointDetector{
-		config: &config,
-		client: client,
+		config:         &config,
+		topicSegmenter: topicSegmenter,
+		llmClient:      llmClient,
 	}
+}
+
+// ======== KeypointDetector 接口实现 ========
+
+// GetConfig 获取配置
+func (kd *KeypointDetector) GetConfig() *KeypointConfig {
+	return kd.config
 }
 
 // DetectKeypoints 检测关键时间点 - 新的基于LLM的主题分割方法
 func (kd *KeypointDetector) DetectKeypoints(videoPath string, segments []core.Segment, frames []core.Frame) ([]Keypoint, error) {
 	log.Printf("开始基于LLM的关键时间点检测: %s (%d个片段)", videoPath, len(segments))
-
-	switch kd.config.Mode {
-	case DetectionModeLLMTopic:
-		return kd.detectKeypointsWithLLMTopicSegmentation(segments, frames)
-	case DetectionModeMultiModal:
-		// 保留旧的多模态检测方法作为备用
-		return kd.detectKeypointsMultiModal(videoPath, segments, frames)
-	default:
-		return kd.detectKeypointsWithLLMTopicSegmentation(segments, frames)
-	}
+	return kd.detectKeypointsWithLLMTopicSegmentation(segments, frames)
 }
 
-// detectKeypointsWithLLMTopicSegmentation 使用LLM进行主题分割和关键点检测
+// detectKeypointsWithLLMTopicSegmentation 使用主题分割器进行关键点检测
 func (kd *KeypointDetector) detectKeypointsWithLLMTopicSegmentation(segments []core.Segment, frames []core.Frame) ([]Keypoint, error) {
-	log.Printf("使用LLM进行主题分割和关键点检测")
+	log.Printf("使用主题分割器进行关键点检测，模式: %v", kd.topicSegmenter.GetSegmentationMode())
 
 	// 步骤1: 将所有片段拼接为完整文本
 	fullText := kd.concatenateSegmentsWithTimestamps(segments)
 
-	// 步骤2: 使用LLM进行主题分割
-	topicSegments, err := kd.segmentTopicsWithLLM(fullText, segments)
+	// 步骤2: 使用主题分割器进行主题分割
+	topicSegments, err := kd.topicSegmenter.SegmentTopics(fullText, segments)
 	if err != nil {
-		log.Printf("LLM主题分割失败，使用默认方法: %v", err)
-		// 如果LLM失败，使用简单的时间分割
+		log.Printf("主题分割失败，使用默认方法: %v", err)
+		// 如果分割失败，使用简单的时间分割
 		topicSegments = kd.createDefaultTopicSegments(segments)
 	}
 
@@ -147,12 +236,106 @@ func (kd *KeypointDetector) concatenateSegmentsWithTimestamps(segments []core.Se
 	return builder.String()
 }
 
-// segmentTopicsWithLLM 使用LLM进行主题分割
-func (kd *KeypointDetector) segmentTopicsWithLLM(fullText string, segments []core.Segment) ([]TopicSegment, error) {
-	if kd.config.Provider == "mock" {
-		return kd.mockTopicSegmentation(segments), nil
+// ======== LLM客户端工厂函数 ========
+
+// NewOpenAIClient 创建OpenAI客户端
+func NewOpenAIClient() LLMClientInterface {
+	return &OpenAIClient{
+		client: createOpenAIClient(),
+	}
+}
+
+// ======== OpenAI客户端实现 ========
+
+func (c *OpenAIClient) CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	// 转换请求格式
+	openaiReq := openai.ChatCompletionRequest{
+		Model:       req.Model,
+		MaxTokens:   req.MaxTokens,
+		Temperature: req.Temperature,
+		Messages:    make([]openai.ChatCompletionMessage, len(req.Messages)),
 	}
 
+	for i, msg := range req.Messages {
+		openaiReq.Messages[i] = openai.ChatCompletionMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		}
+	}
+
+	resp, err := c.client.CreateChatCompletion(ctx, openaiReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换响应格式
+	response := &ChatCompletionResponse{
+		Choices: make([]ChatChoice, len(resp.Choices)),
+	}
+
+	for i, choice := range resp.Choices {
+		response.Choices[i] = ChatChoice{
+			Message: ChatMessage{
+				Role:    choice.Message.Role,
+				Content: choice.Message.Content,
+			},
+		}
+	}
+
+	return response, nil
+}
+
+func (c *OpenAIClient) GetProvider() string {
+	return "openai"
+}
+
+func (c *OpenAIClient) IsAvailable() bool {
+	return c.client != nil
+}
+
+// ======== Mock LLM客户端实现 ========
+
+func (c *MockLLMClient) CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
+	return &ChatCompletionResponse{
+		Choices: []ChatChoice{
+			{
+				Message: ChatMessage{
+					Role:    "assistant",
+					Content: `{"segments": []}`, // Mock空响应
+				},
+			},
+		},
+	}, nil
+}
+
+func (c *MockLLMClient) GetProvider() string {
+	return "mock"
+}
+
+func (c *MockLLMClient) IsAvailable() bool {
+	return true
+}
+
+// ======== 主题分割器工厂函数 ========
+
+// NewLLMTopicSegmenter 创建LLM主题分割器
+func NewLLMTopicSegmenter(config *KeypointConfig, llmClient LLMClientInterface) TopicSegmenterInterface {
+	return &LLMTopicSegmenter{
+		config:    config,
+		llmClient: llmClient,
+	}
+}
+
+// NewMockTopicSegmenter 创建Mock主题分割器
+func NewMockTopicSegmenter(config *KeypointConfig) TopicSegmenterInterface {
+	return &MockTopicSegmenter{
+		config: config,
+	}
+}
+
+// ======== LLM主题分割器实现 ========
+
+func (s *LLMTopicSegmenter) SegmentTopics(fullText string, segments []core.Segment) ([]TopicSegment, error) {
 	log.Printf("使用LLM进行主题分割，文本长度: %d", len(fullText))
 
 	prompt := fmt.Sprintf(`请对以下语音转文字的内容进行主题分割，将内容按照不同的主题进行分段。
@@ -186,11 +369,11 @@ func (kd *KeypointDetector) segmentTopicsWithLLM(fullText string, segments []cor
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	req := openai.ChatCompletionRequest{
-		Model: kd.config.Model,
-		Messages: []openai.ChatCompletionMessage{
+	req := ChatCompletionRequest{
+		Model: s.config.Model,
+		Messages: []ChatMessage{
 			{
-				Role:    openai.ChatMessageRoleUser,
+				Role:    "user",
 				Content: prompt,
 			},
 		},
@@ -198,7 +381,7 @@ func (kd *KeypointDetector) segmentTopicsWithLLM(fullText string, segments []cor
 		Temperature: 0.3, // 较低的温度确保稳定输出
 	}
 
-	resp, err := kd.client.CreateChatCompletion(ctx, req)
+	resp, err := s.llmClient.CreateChatCompletion(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("LLM主题分割API调用失败: %v", err)
 	}
@@ -209,11 +392,15 @@ func (kd *KeypointDetector) segmentTopicsWithLLM(fullText string, segments []cor
 
 	// 解析JSON响应
 	content := strings.TrimSpace(resp.Choices[0].Message.Content)
-	return kd.parseTopicSegmentResponse(content)
+	return s.parseTopicSegmentResponse(content)
+}
+
+func (s *LLMTopicSegmenter) GetSegmentationMode() KeypointDetectionMode {
+	return DetectionModeLLMTopic
 }
 
 // parseTopicSegmentResponse 解析LLM的主题分割响应
-func (kd *KeypointDetector) parseTopicSegmentResponse(content string) ([]TopicSegment, error) {
+func (s *LLMTopicSegmenter) parseTopicSegmentResponse(content string) ([]TopicSegment, error) {
 	var response struct {
 		Segments []TopicSegment `json:"segments"`
 	}
@@ -237,7 +424,7 @@ func (kd *KeypointDetector) parseTopicSegmentResponse(content string) ([]TopicSe
 	for _, segment := range response.Segments {
 		if segment.StartTime >= 0 && segment.EndTime > segment.StartTime && segment.Topic != "" {
 			// 确保时间合理
-			if segment.EndTime-segment.StartTime >= kd.config.MinInterval {
+			if segment.EndTime-segment.StartTime >= s.config.MinInterval {
 				validSegments = append(validSegments, segment)
 			}
 		}
@@ -247,8 +434,18 @@ func (kd *KeypointDetector) parseTopicSegmentResponse(content string) ([]TopicSe
 	return validSegments, nil
 }
 
+// ======== Mock主题分割器实现 ========
+
+func (s *MockTopicSegmenter) SegmentTopics(fullText string, segments []core.Segment) ([]TopicSegment, error) {
+	return s.mockTopicSegmentation(segments), nil
+}
+
+func (s *MockTopicSegmenter) GetSegmentationMode() KeypointDetectionMode {
+	return DetectionModeLLMTopic // Mock也使用相同模式
+}
+
 // mockTopicSegmentation Mock主题分割
-func (kd *KeypointDetector) mockTopicSegmentation(segments []core.Segment) []TopicSegment {
+func (s *MockTopicSegmenter) mockTopicSegmentation(segments []core.Segment) []TopicSegment {
 	log.Printf("[Mock] 使用简单时间分割生成主题段落")
 
 	if len(segments) == 0 {
@@ -265,7 +462,7 @@ func (kd *KeypointDetector) mockTopicSegmentation(segments []core.Segment) []Top
 	}
 
 	var currentText strings.Builder
-	segmentDuration := kd.config.MinInterval
+	segmentDuration := s.config.MinInterval
 
 	for i, segment := range segments {
 		currentText.WriteString(segment.Text + " ")
@@ -413,7 +610,10 @@ func (kd *KeypointDetector) filterAndRankKeypoints(keypoints []Keypoint) []Keypo
 
 // createDefaultTopicSegments 创建默认的主题段落（备用方法）
 func (kd *KeypointDetector) createDefaultTopicSegments(segments []core.Segment) []TopicSegment {
-	return kd.mockTopicSegmentation(segments)
+	// 使用Mock分割器作为默认方法
+	mockSegmenter := NewMockTopicSegmenter(kd.config)
+	topicSegments, _ := mockSegmenter.SegmentTopics("", segments)
+	return topicSegments
 }
 
 // UpdateConfig 更新配置
@@ -432,13 +632,6 @@ func (kd *KeypointDetector) UpdateConfig(key string, value interface{}) {
 			kd.config.TopicThreshold = v
 		}
 	}
-}
-
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
 }
 
 // EnhancedKeypointResponse 增强的关键点响应
@@ -464,36 +657,4 @@ func createOpenAIClient() *openai.Client {
 		clientConfig.BaseURL = cfg.BaseURL
 	}
 	return openai.NewClientWithConfig(clientConfig)
-}
-
-// detectKeypointsMultiModal 多模态检测方法（保留作为备用）
-func (kd *KeypointDetector) detectKeypointsMultiModal(videoPath string, segments []core.Segment, frames []core.Frame) ([]Keypoint, error) {
-	// 简化的多模态检测，主要基于时间间隔
-	log.Printf("使用简化的多模态检测方法")
-
-	var keypoints []Keypoint
-	interval := kd.config.MinInterval
-
-	for i := 0; i < len(segments); i++ {
-		segment := segments[i]
-
-		// 每隔一定时间间隔创建关键点
-		if i == 0 || segment.Start-keypoints[len(keypoints)-1].Timestamp >= interval {
-			keypoint := Keypoint{
-				Timestamp:   segment.Start,
-				Confidence:  0.7,
-				Type:        "time_interval",
-				Description: fmt.Sprintf("时间节点: %.1fs", segment.Start),
-				Score:       0.7,
-			}
-
-			if len(frames) > 0 {
-				keypoint.FramePath = kd.findClosestFrame(segment.Start, frames)
-			}
-
-			keypoints = append(keypoints, keypoint)
-		}
-	}
-
-	return keypoints, nil
 }

@@ -14,7 +14,7 @@ import (
 
 // KeypointHandlers 关键点处理器
 type KeypointHandlers struct {
-	detector *processors.KeypointDetector
+	detector processors.KeypointDetectorInterface
 }
 
 // NewKeypointHandlers 创建关键点处理器
