@@ -153,17 +153,11 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Starting summary generation with full text mode...")
 	items, err := SummarizeFromFullText(segments, frames, response.JobID)
 	if err != nil {
-		log.Printf("Full text summarization failed, falling back to traditional method: %v", err)
-		// 如果新方法失败，回退到传统方法
-		summarizer := pickSummaryProvider()
-		items, err = summarizer.Summarize(segments, frames)
-		if err != nil {
-			response.Steps = append(response.Steps, Step{Name: "summarize", Status: "failed", Error: err.Error()})
-			response.Message = "Summary generation failed"
-			core.WriteJSON(w, http.StatusInternalServerError, response)
-			return
-		}
-		response.Warnings = append(response.Warnings, "Used fallback summarization method")
+		log.Printf("Full text summarization failed: %v", err)
+		response.Steps = append(response.Steps, Step{Name: "summarize", Status: "failed", Error: err.Error()})
+		response.Message = "Summary generation failed"
+		core.WriteJSON(w, http.StatusInternalServerError, response)
+		return
 	}
 
 	// Save items

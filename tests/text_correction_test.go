@@ -57,7 +57,7 @@ func TestTextCorrection(t *testing.T) {
 	t.Logf("Created test transcript with %d segments", len(testSegments))
 
 	// 执行文本修正
-	correctedSegments, correctionSession, err := processors.CorrectTranscriptSegments(testSegments, testJobID)
+	correctedSegments, correctionSession, err := processors.CorrectFullTranscript(testSegments, testJobID)
 	if err != nil {
 		t.Fatalf("Text correction failed: %v", err)
 	}
@@ -72,15 +72,15 @@ func TestTextCorrection(t *testing.T) {
 		t.Fatal("Correction session is nil")
 	}
 
-	if correctionSession.JobID != testJobID {
-		t.Errorf("Expected job ID %s, got %s", testJobID, correctionSession.JobID)
+	if correctionSession.Provider == "" {
+		t.Error("Provider should not be empty")
 	}
 
-	if correctionSession.TotalSegments != len(testSegments) {
-		t.Errorf("Expected %d total segments, got %d", len(testSegments), correctionSession.TotalSegments)
+	if len(correctedSegments) != len(testSegments) {
+		t.Errorf("Expected %d segments, got %d", len(testSegments), len(correctedSegments))
 	}
 
-	t.Logf("Correction session: %d/%d segments processed", correctionSession.CorrectedSegments, correctionSession.TotalSegments)
+	t.Logf("Correction session: provider=%s, model=%s, changes=%d", correctionSession.Provider, correctionSession.Model, len(correctionSession.Changes))
 
 	// 保存修正会话记录
 	if err := processors.SaveCorrectionSession(testDir, correctionSession); err != nil {
@@ -161,7 +161,7 @@ func TestTextCorrectionWithEmptySegments(t *testing.T) {
 		},
 	}
 
-	correctedSegments, correctionSession, err := processors.CorrectTranscriptSegments(testSegments, testJobID)
+	correctedSegments, correctionSession, err := processors.CorrectFullTranscript(testSegments, testJobID)
 	if err != nil {
 		t.Fatalf("Text correction failed: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestTextCorrectionWithEmptySegments(t *testing.T) {
 	}
 
 	t.Logf("Empty segments test completed successfully")
-	t.Logf("Correction session: %d/%d segments processed", correctionSession.CorrectedSegments, correctionSession.TotalSegments)
+	t.Logf("Correction session: provider=%s, model=%s, changes=%d", correctionSession.Provider, correctionSession.Model, len(correctionSession.Changes))
 }
 
 func TestTextCorrectionIntegration(t *testing.T) {
@@ -219,7 +219,7 @@ func TestTextCorrectionIntegration(t *testing.T) {
 		t.Logf("transcribeAudio failed (expected in test): %v", err)
 
 		// 直接测试文本修正功能
-		correctedSegments, correctionSession, err := processors.CorrectTranscriptSegments(testSegments, testJobID)
+		correctedSegments, correctionSession, err := processors.CorrectFullTranscript(testSegments, testJobID)
 		if err != nil {
 			t.Fatalf("Direct text correction failed: %v", err)
 		}
@@ -230,7 +230,7 @@ func TestTextCorrectionIntegration(t *testing.T) {
 		}
 
 		t.Logf("Integration test completed with direct correction")
-		t.Logf("Correction session: %d/%d segments processed", correctionSession.CorrectedSegments, correctionSession.TotalSegments)
+		t.Logf("Correction session: provider=%s, model=%s, changes=%d", correctionSession.Provider, correctionSession.Model, len(correctionSession.Changes))
 		return
 	}
 

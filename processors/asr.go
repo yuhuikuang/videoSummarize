@@ -172,7 +172,7 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]core.Segment, error) {
 			checkpoint.CurrentStep = "text_correction"
 			saveCheckpoint(filepath.Join(core.DataRoot(), jobID), checkpoint)
 
-			correctedSegs, correctionSession, corrErr := CorrectTranscriptSegments(segs, jobID)
+			correctedSegs, correctionSession, corrErr := CorrectFullTranscript(segs, jobID)
 			if corrErr != nil {
 				log.Printf("Text correction failed for job %s: %v", jobID, corrErr)
 				// 如果修正失败，使用原始转录结果

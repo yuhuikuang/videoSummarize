@@ -17,32 +17,22 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-// 文本修正模式
-type CorrectionMode int
-
-const (
-	CorrectionModeSegmented CorrectionMode = iota // 分段修正（旧模式）
-	CorrectionModeFull                            // 完整文本修正（新模式）
-)
-
-// TextCorrectionConfig 文本修正配置
+// 文本修正配置
 type TextCorrectionConfig struct {
-	Mode           CorrectionMode `json:"mode"`            // 修正模式
-	Provider       string         `json:"provider"`        // 服务提供商: "openai", "volcengine", "mock"
-	Model          string         `json:"model"`           // 模型名称
-	MaxTokens      int            `json:"max_tokens"`      // 最大token数
-	Temperature    float32        `json:"temperature"`     // 温度参数
-	RetryAttempts  int            `json:"retry_attempts"`  // 重试次数
-	TimeoutSeconds int            `json:"timeout_seconds"` // 超时时间
-	ChunkSize      int            `json:"chunk_size"`      // 分块大小（字符数）
-	OverlapSize    int            `json:"overlap_size"`    // 重叠大小
+	Provider       string  `json:"provider"`        // 服务提供商: "openai", "volcengine", "mock"
+	Model          string  `json:"model"`           // 模型名称
+	MaxTokens      int     `json:"max_tokens"`      // 最大token数
+	Temperature    float32 `json:"temperature"`     // 温度参数
+	RetryAttempts  int     `json:"retry_attempts"`  // 重试次数
+	TimeoutSeconds int     `json:"timeout_seconds"` // 超时时间
+	ChunkSize      int     `json:"chunk_size"`      // 分块大小（字符数）
+	OverlapSize    int     `json:"overlap_size"`    // 重叠大小
 }
 
 // getTextCorrectionConfig 获取文本修正配置
 func getTextCorrectionConfig() TextCorrectionConfig {
 	return TextCorrectionConfig{
-		Mode:           CorrectionModeFull, // 默认使用完整文本修正模式
-		Provider:       "mock",             // 目前使用mock，等待token重新可用
+		Provider:       "mock", // 目前使用mock，等待token重新可用
 		Model:          "gpt-3.5-turbo",
 		MaxTokens:      4000,
 		Temperature:    0.1,
@@ -59,13 +49,6 @@ type FullTextCorrector interface {
 	CorrectFullTranscript(segments []core.Segment) ([]core.Segment, *CorrectionSession, error)
 	// CorrectTextChunks 分块修正大文本（如果文本过长）
 	CorrectTextChunks(fullText string) (string, error)
-}
-
-// TextCorrector 传统文本修正器接口（保留兼容性）
-type TextCorrector interface {
-	CorrectText(text string) (string, error)
-	CorrectTextWithContext(text string, fullContext string, segmentIndex int, totalSegments int) (string, error)
-	CorrectFullText(fullText string, segments []core.Segment) ([]core.Segment, error)
 }
 
 // TextChange 文本变化记录
@@ -95,6 +78,9 @@ type LLMFullTextCorrector struct {
 	config TextCorrectionConfig
 }
 
+// MockFullTextCorrector Mock完整文本修正器
+type MockFullTextCorrector struct{}
+
 // NewFullTextCorrector 创建完整文本修正器
 func NewFullTextCorrector() FullTextCorrector {
 	config := getTextCorrectionConfig()
@@ -114,9 +100,7 @@ func NewFullTextCorrector() FullTextCorrector {
 	}
 }
 
-// MockFullTextCorrector Mock完整文本修正器
-type MockFullTextCorrector struct{}
-
+// MockFullTextCorrector 实现
 func (m *MockFullTextCorrector) CorrectFullTranscript(segments []core.Segment) ([]core.Segment, *CorrectionSession, error) {
 	log.Printf("[Mock] 使用Mock模式进行完整文本修正")
 
@@ -424,380 +408,7 @@ func openaiClient() *openai.Client {
 	return openai.NewClientWithConfig(clientConfig)
 }
 
-// LLMTextCorrector LLM文本修正器
-type LLMTextCorrector struct {
-	cli   *openai.Client
-	model string
-}
-
-// MockTextCorrector Mock文本修正器
-type MockTextCorrector struct{}
-
-// MockTextCorrector 实现
-func (m MockTextCorrector) CorrectText(text string) (string, error) {
-	return text, nil // Mock: 直接返回原文本
-}
-
-func (m MockTextCorrector) CorrectTextWithContext(text string, fullContext string, segmentIndex int, totalSegments int) (string, error) {
-	return text, nil // Mock: 直接返回原文本
-}
-
-func (m MockTextCorrector) CorrectFullText(fullText string, segments []core.Segment) ([]core.Segment, error) {
-	return segments, nil // Mock: 直接返回原始片段
-}
-
-// LLMTextCorrector 实现
-func (l LLMTextCorrector) CorrectText(text string) (string, error) {
-	ctx := context.Background()
-
-	// 构建修正提示词
-	prompt := `这是一段语音转文字的文本，请严格检查并修正以下文本中的所有文字错误，在保持原始语义的前提下提升文本准确性。要求：
-1) 修正错别字
-2) 不改变原意
-3) 不添加额外内容
-4) 保持原有的标点符号和格式
-5) 只返回修正后的文本，不要添加任何解释或说明
-
-待修正文本：
-` + text
-
-	req := openai.ChatCompletionRequest{
-		Model: l.model,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: prompt,
-			},
-		},
-		MaxTokens:   2000,
-		Temperature: 0.1, // 低温度确保稳定输出
-	}
-
-	resp, err := l.cli.CreateChatCompletion(ctx, req)
-	if err != nil {
-		// 检查是否是API限制错误（429 Too Many Requests）
-		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Too Many Requests") || strings.Contains(err.Error(), "inference limit") {
-			log.Printf("API rate limit reached, returning original text: %v", err)
-			// 当遇到API限制时，返回特殊错误以便调用方识别
-			return text, fmt.Errorf("API_RATE_LIMIT: %v", err)
-		}
-		return "", fmt.Errorf("text correction API failed: %v", err)
-	}
-
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response choices from text correction API")
-	}
-
-	correctedText := strings.TrimSpace(resp.Choices[0].Message.Content)
-	return correctedText, nil
-}
-
-func (l LLMTextCorrector) CorrectTextWithContext(text string, fullContext string, segmentIndex int, totalSegments int) (string, error) {
-	ctx := context.Background()
-
-	// 构建带上下文的修正提示词
-	prompt := fmt.Sprintf(`这是一段语音转文字的完整文本，请修正其中第 %d 个片段的文字错误。
-
-完整文本上下文：
-%s
-
-当前需要修正的片段（第 %d/%d 个）：
-%s
-
-修正要求：
-1) 基于完整上下文理解语义
-2) 修正错别字和语法错误
-3) 保持原意不变
-4) 确保与上下文连贯
-5) 只返回修正后的片段文本，不要添加任何解释
-
-修正后的片段：`,
-		segmentIndex+1, fullContext, segmentIndex+1, totalSegments, text)
-
-	req := openai.ChatCompletionRequest{
-		Model: l.model,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: prompt,
-			},
-		},
-		MaxTokens:   2000,
-		Temperature: 0.1, // 低温度确保稳定输出
-	}
-
-	resp, err := l.cli.CreateChatCompletion(ctx, req)
-	if err != nil {
-		// 检查是否是API限制错误（429 Too Many Requests）
-		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Too Many Requests") || strings.Contains(err.Error(), "inference limit") {
-			log.Printf("API rate limit reached, returning original text: %v", err)
-			// 当遇到API限制时，返回特殊错误以便调用方识别
-			return text, fmt.Errorf("API_RATE_LIMIT: %v", err)
-		}
-		return "", fmt.Errorf("text correction API failed: %v", err)
-	}
-
-	if len(resp.Choices) == 0 {
-		return "", fmt.Errorf("no response choices from text correction API")
-	}
-
-	correctedText := strings.TrimSpace(resp.Choices[0].Message.Content)
-	return correctedText, nil
-}
-
-func (l LLMTextCorrector) CorrectFullText(fullText string, segments []core.Segment) ([]core.Segment, error) {
-	ctx := context.Background()
-
-	// 构建优化的修正提示词，专注于文本修正而非分段
-	prompt := fmt.Sprintf(`请修正以下语音转文字的文本，只需要修正错别字和语法错误，保持原意不变。
-
-原始文本：
-%s
-
-修正要求：
-1) 修正错别字和语法错误
-2) 保持原意和语义不变
-3) 保持自然的语言流畅性
-4) 不要改变文本的整体结构
-5) 直接返回修正后的完整文本，不要添加任何解释
-
-修正后的文本：`, fullText)
-
-	req := openai.ChatCompletionRequest{
-		Model: l.model,
-		Messages: []openai.ChatCompletionMessage{
-			{
-				Role:    openai.ChatMessageRoleUser,
-				Content: prompt,
-			},
-		},
-		MaxTokens:   4000,
-		Temperature: 0.1, // 低温度确保稳定输出
-	}
-
-	resp, err := l.cli.CreateChatCompletion(ctx, req)
-	if err != nil {
-		// 检查是否是API限制错误
-		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Too Many Requests") || strings.Contains(err.Error(), "inference limit") {
-			log.Printf("API rate limit reached, returning original segments: %v", err)
-			return segments, fmt.Errorf("API_RATE_LIMIT: %v", err)
-		}
-		return nil, fmt.Errorf("full text correction API failed: %v", err)
-	}
-
-	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("no response choices from full text correction API")
-	}
-
-	// 使用文本对齐算法处理修正结果
-	// 简化版本：直接返回原始片段，因为对齐算法未实现
-	log.Printf("Text alignment not implemented, returning original segments")
-	return segments, nil
-}
-
-// CorrectionLog 修正日志记录
-type CorrectionLog struct {
-	JobID         string    `json:"job_id"`
-	Timestamp     time.Time `json:"timestamp"`
-	OriginalText  string    `json:"original_text"`
-	CorrectedText string    `json:"corrected_text"`
-	SegmentIndex  int       `json:"segment_index"`
-	StartTime     float64   `json:"start_time"`
-	EndTime       float64   `json:"end_time"`
-	Provider      string    `json:"provider"`
-	Model         string    `json:"model"`
-	Version       string    `json:"version"`
-}
-
-// pickTextCorrector 选择文本修正提供者
-func pickTextCorrector() TextCorrector {
-	cfg, err := config.LoadConfig()
-	if err != nil || !cfg.HasValidAPI() {
-		log.Println("Warning: No valid API configuration found, using mock text corrector")
-		return MockTextCorrector{}
-	}
-
-	cli := openaiClient()
-	return LLMTextCorrector{
-		cli:   cli,
-		model: cfg.ChatModel,
-	}
-}
-
-// correctTranscriptSegments 修正转录片段
-// CorrectTranscriptSegmentsFull 一次性修正完整文本，基于标点符号智能分段
-func CorrectTranscriptSegmentsFull(segments []core.Segment, jobID string) ([]core.Segment, *CorrectionSession, error) {
-	// 初始化修正会话
-	session := &CorrectionSession{
-		StartTime:     time.Now(),
-		OriginalText:  "",
-		CorrectedText: "",
-		Provider:      "",
-		Model:         "",
-		TotalTokens:   0,
-		Changes:       []TextChange{},
-	}
-
-	// 获取配置
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		log.Printf("Warning: Failed to load config: %v, using default text correction settings", err)
-	}
-
-	// 选择文本修正器
-	corrector := pickTextCorrector()
-	if cfg != nil {
-		session.Provider = "LLM"
-		session.Model = cfg.ChatModel
-	} else {
-		session.Provider = "Mock"
-		session.Model = "default"
-	}
-
-	// 构建完整文本
-	var fullTextBuilder strings.Builder
-	for i, segment := range segments {
-		if i > 0 {
-			fullTextBuilder.WriteString(" ")
-		}
-		fullTextBuilder.WriteString(segment.Text)
-	}
-	fullText := fullTextBuilder.String()
-
-	log.Printf("Starting full text correction for job %s with %d segments", jobID, len(segments))
-
-	// 声明变量
-	var correctedSegments []core.Segment
-	var correctionErr error
-
-	// 一次性修正完整文本
-	correctedSegments, correctionErr = corrector.CorrectFullText(fullText, segments)
-	if correctionErr != nil {
-		// 检查是否是API限制错误
-		if strings.Contains(correctionErr.Error(), "API_RATE_LIMIT") {
-			log.Printf("API rate limit reached for full text correction, using original segments")
-			session.EndTime = time.Now()
-			return segments, session, nil
-		} else {
-			errorMsg := fmt.Sprintf("Full text correction failed: %v", correctionErr)
-			log.Printf(errorMsg)
-			session.EndTime = time.Now()
-			return segments, session, correctionErr
-		}
-	}
-
-	// 记录修正日志和计算实际修正数量
-	for i, segment := range segments {
-		if i < len(correctedSegments) {
-			// 记录变化
-			if segment.Text != correctedSegments[i].Text {
-				change := TextChange{
-					SegmentIndex: i,
-					Original:     segment.Text,
-					Corrected:    correctedSegments[i].Text,
-					ChangeType:   "text_correction",
-					Timestamp:    segment.Start,
-				}
-				session.Changes = append(session.Changes, change)
-			}
-		}
-	}
-
-	session.EndTime = time.Now()
-	log.Printf("Full text correction completed for job %s. Made %d changes",
-		jobID, len(session.Changes))
-
-	return correctedSegments, session, nil
-}
-
-func CorrectTranscriptSegments(segments []core.Segment, jobID string) ([]core.Segment, *CorrectionSession, error) {
-	log.Printf("Starting text correction for job %s with %d segments", jobID, len(segments))
-
-	// 初始化修正会话
-	session := &CorrectionSession{
-		StartTime:     time.Now(),
-		OriginalText:  "",
-		CorrectedText: "",
-		Provider:      "llm",
-		Model:         "",
-		TotalTokens:   0,
-		Changes:       make([]TextChange, 0),
-	}
-
-	// 获取配置信息
-	cfg, err := config.LoadConfig()
-	if err == nil && cfg.HasValidAPI() {
-		session.Model = cfg.ChatModel
-	}
-
-	corrector := pickTextCorrector()
-	correctedSegments := make([]core.Segment, len(segments))
-
-	// 构建完整文本上下文
-	fullContext := ""
-	for i, segment := range segments {
-		if i > 0 {
-			fullContext += " "
-		}
-		fullContext += segment.Text
-	}
-
-	for i, segment := range segments {
-		log.Printf("Correcting segment %d/%d for job %s with full context", i+1, len(segments), jobID)
-
-		// 跳过空文本
-		if strings.TrimSpace(segment.Text) == "" {
-			correctedSegments[i] = segment
-			continue
-		}
-
-		// 声明变量
-		var correctedText string
-		var correctionErr error
-
-		// 执行文本修正，使用带上下文的方法
-		correctedText, correctionErr = corrector.CorrectTextWithContext(segment.Text, fullContext, i, len(segments))
-		if correctionErr != nil {
-			// 检查是否是API限制错误
-			if strings.Contains(correctionErr.Error(), "API_RATE_LIMIT") {
-				log.Printf("API rate limit reached for segment %d, using original text", i)
-				// 使用原文本，但不记录为修正
-				correctedText = segment.Text
-			} else {
-				log.Printf("Failed to correct segment %d with context for job %s: %v", i, jobID, correctionErr)
-				// 使用原文本作为后备
-				correctedText = segment.Text
-			}
-		}
-
-		// 创建修正后的片段
-		correctedSegments[i] = core.Segment{
-			Start: segment.Start,
-			End:   segment.End,
-			Text:  correctedText,
-		}
-
-		// 记录修正如果有变化
-		if segment.Text != correctedText {
-			change := TextChange{
-				SegmentIndex: i,
-				Original:     segment.Text,
-				Corrected:    correctedText,
-				ChangeType:   "text_correction",
-				Timestamp:    segment.Start,
-			}
-			session.Changes = append(session.Changes, change)
-		}
-	}
-
-	session.EndTime = time.Now()
-	log.Printf("Text correction completed for job %s: %d changes made",
-		jobID, len(session.Changes))
-
-	return correctedSegments, session, nil
-}
-
-// saveCorrectionSession 保存修正会话记录
+// SaveCorrectionSession 保存修正会话记录
 func SaveCorrectionSession(jobDir string, session *CorrectionSession) error {
 	sessionPath := filepath.Join(jobDir, "correction_session.json")
 	data, err := json.MarshalIndent(session, "", "  ")
@@ -813,7 +424,7 @@ func SaveCorrectionSession(jobDir string, session *CorrectionSession) error {
 	return nil
 }
 
-// saveCorrectedTranscript 保存修正后的转录文件
+// SaveCorrectedTranscript 保存修正后的转录文件
 func SaveCorrectedTranscript(jobDir string, segments []core.Segment) error {
 	// 保存修正后的转录文件
 	correctedPath := filepath.Join(jobDir, "transcript_corrected.json")
@@ -845,7 +456,7 @@ func SaveCorrectedTranscript(jobDir string, segments []core.Segment) error {
 	return nil
 }
 
-// generateCorrectionReport 生成修正报告
+// GenerateCorrectionReport 生成修正报告
 func GenerateCorrectionReport(session *CorrectionSession) string {
 	report := fmt.Sprintf("文本修正报告\n")
 	report += fmt.Sprintf("===================\n")
@@ -873,13 +484,8 @@ type TextCorrectionResponse struct {
 	Message           string            `json:"message"`
 }
 
-// correctTextHandler 文本修正HTTP处理器
 // CorrectTextHandler 导出的处理器函数
 func CorrectTextHandler(w http.ResponseWriter, r *http.Request) {
-	correctTextHandler(w, r)
-}
-
-func correctTextHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -917,8 +523,8 @@ func correctTextHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 执行文本修正
-	correctedSegments, correctionSession, err := CorrectTranscriptSegments(segments, req.JobID)
+	// 执行完整文本修正
+	correctedSegments, correctionSession, err := CorrectFullTranscript(segments, req.JobID)
 	if err != nil {
 		log.Printf("Text correction failed for job %s: %v", req.JobID, err)
 		core.WriteJSON(w, http.StatusInternalServerError, TextCorrectionResponse{
