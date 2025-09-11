@@ -20,27 +20,13 @@ import (
 	"videoSummarize/utils"
 )
 
-// 工具函数已移至utils包，保持代码统一性
-// loadConfig - 使用 config.LoadConfig()
-// detectGPUType - 使用 utils.DetectGPUType()
-// getHardwareAccelArgs - 使用 utils.GetHardwareAccelArgs()
-// runFFmpeg - 使用 utils.RunFFmpeg()
-
 // PreprocessHandler 导出的处理器函数
 func PreprocessHandler(w http.ResponseWriter, r *http.Request) {
-	preprocessHandler(w, r)
+	preprocessHandlerInternal(w, r, false)
 }
 
 // PreprocessWithAudioEnhancementHandler 带音频增强的预处理处理器
 func PreprocessWithAudioEnhancementHandler(w http.ResponseWriter, r *http.Request) {
-	preprocessWithAudioEnhancementHandler(w, r)
-}
-
-func preprocessHandler(w http.ResponseWriter, r *http.Request) {
-	preprocessHandlerInternal(w, r, false)
-}
-
-func preprocessWithAudioEnhancementHandler(w http.ResponseWriter, r *http.Request) {
 	preprocessHandlerInternal(w, r, true)
 }
 

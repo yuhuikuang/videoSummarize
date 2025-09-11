@@ -33,14 +33,12 @@ func main() {
 	initializer := initialization.NewSystemInitializer(dataRoot)
 	result := initializer.InitializeSystem()
 	if result.Error != nil {
-		log.Fatalf("系统初始化失败: %v", result.Error)
+		panic("系统初始化失败: " + result.Error.Error())
 	}
 
 	log.Printf("系统初始化成功")
 
-	// 初始化 handlers 包中的全局并行处理器，避免 /process-parallel 触发 nil 引用
-	// handlers.InitProcessor(result.ResourceManager)
-	// 改为注入同一个并行处理器实例，确保 /process-parallel 与 /pipeline-status 使用同一处理器
+	// 
 	handlers.SetGlobalProcessor(result.ParallelProcessor)
 
 	// 创建关键点处理器

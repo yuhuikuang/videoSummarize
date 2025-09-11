@@ -98,8 +98,8 @@ func (l LLMTextCorrector) CorrectText(text string) (string, error) {
 		// 检查是否是API限制错误（429 Too Many Requests）
 		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Too Many Requests") || strings.Contains(err.Error(), "inference limit") {
 			log.Printf("API rate limit reached, returning original text: %v", err)
-			// 当遇到API限制时，返回原文本而不是错误
-			return text, nil
+			// 当遇到API限制时，返回特殊错误以便调用方识别
+			return text, fmt.Errorf("API_RATE_LIMIT: %v", err)
 		}
 		return "", fmt.Errorf("text correction API failed: %v", err)
 	}
@@ -151,8 +151,8 @@ func (l LLMTextCorrector) CorrectTextWithContext(text string, fullContext string
 		// 检查是否是API限制错误（429 Too Many Requests）
 		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Too Many Requests") || strings.Contains(err.Error(), "inference limit") {
 			log.Printf("API rate limit reached, returning original text: %v", err)
-			// 当遇到API限制时，返回原文本而不是错误
-			return text, nil
+			// 当遇到API限制时，返回特殊错误以便调用方识别
+			return text, fmt.Errorf("API_RATE_LIMIT: %v", err)
 		}
 		return "", fmt.Errorf("text correction API failed: %v", err)
 	}
@@ -200,7 +200,7 @@ func (l LLMTextCorrector) CorrectFullText(fullText string, segments []core.Segme
 		// 检查是否是API限制错误
 		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "Too Many Requests") || strings.Contains(err.Error(), "inference limit") {
 			log.Printf("API rate limit reached, returning original segments: %v", err)
-			return segments, nil
+			return segments, fmt.Errorf("API_RATE_LIMIT: %v", err)
 		}
 		return nil, fmt.Errorf("full text correction API failed: %v", err)
 	}
@@ -321,14 +321,22 @@ func CorrectTranscriptSegmentsFull(segments []core.Segment, jobID string) ([]cor
 	// 一次性修正完整文本
 	correctedSegments, err := corrector.CorrectFullText(fullText, segments)
 	if err != nil {
-		errorMsg := fmt.Sprintf("Full text correction failed: %v", err)
-		log.Printf(errorMsg)
-		session.Errors = append(session.Errors, errorMsg)
-		session.EndTime = time.Now()
-		return segments, session, err
+		// 检查是否是API限制错误
+		if strings.Contains(err.Error(), "API_RATE_LIMIT") {
+			log.Printf("API rate limit reached for full text correction, using original segments")
+			session.Errors = append(session.Errors, "Full text correction: API rate limit reached")
+			session.EndTime = time.Now()
+			return segments, session, nil
+		} else {
+			errorMsg := fmt.Sprintf("Full text correction failed: %v", err)
+			log.Printf(errorMsg)
+			session.Errors = append(session.Errors, errorMsg)
+			session.EndTime = time.Now()
+			return segments, session, err
+		}
 	}
 
-	// 记录修正日志
+	// 记录修正日志和计算实际修正数量
 	for i, segment := range segments {
 		if i < len(correctedSegments) {
 			log := CorrectionLog{
@@ -344,7 +352,10 @@ func CorrectTranscriptSegmentsFull(segments []core.Segment, jobID string) ([]cor
 				Version:       session.Version,
 			}
 			session.Logs = append(session.Logs, log)
-			session.CorrectedSegments++
+			// 只有当文本真正被修正时才计数（文本有变化）
+			if segment.Text != correctedSegments[i].Text {
+				session.CorrectedSegments++
+			}
 		}
 	}
 
@@ -400,11 +411,20 @@ func CorrectTranscriptSegments(segments []core.Segment, jobID string) ([]core.Se
 		// 执行文本修正，使用带上下文的方法
 		correctedText, err := corrector.CorrectTextWithContext(segment.Text, fullContext, i, len(segments))
 		if err != nil {
-			log.Printf("Failed to correct segment %d with context for job %s: %v", i, jobID, err)
-			session.Errors = append(session.Errors, fmt.Sprintf("Segment %d: %v", i, err))
-			// 使用原文本作为后备
-			correctedText = segment.Text
+			// 检查是否是API限制错误
+			if strings.Contains(err.Error(), "API_RATE_LIMIT") {
+				log.Printf("API rate limit reached for segment %d, using original text", i)
+				session.Errors = append(session.Errors, fmt.Sprintf("Segment %d: API rate limit reached", i))
+				// 使用原文本，但不计入成功修正数
+				correctedText = segment.Text
+			} else {
+				log.Printf("Failed to correct segment %d with context for job %s: %v", i, jobID, err)
+				session.Errors = append(session.Errors, fmt.Sprintf("Segment %d: %v", i, err))
+				// 使用原文本作为后备
+				correctedText = segment.Text
+			}
 		} else {
+			// 只有真正成功修正时才增加计数
 			session.CorrectedSegments++
 		}
 		
