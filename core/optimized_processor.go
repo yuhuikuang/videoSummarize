@@ -626,11 +626,9 @@ func (op *OptimizedProcessor) GetOptimizedMetrics() *OptimizedMetrics {
 		ResumedJobs:    op.Metrics.ResumedJobs,
 		CacheHits:      op.Metrics.CacheHits,
 		CacheMisses:    op.Metrics.CacheMisses,
-		GPUAccelerated: op.Metrics.GPUAccelerated,
 		CPUProcessed:   op.Metrics.CPUProcessed,
 		AverageTime:    op.Metrics.AverageTime,
 		TotalTime:      op.Metrics.TotalTime,
-		TimeWithGPU:    op.Metrics.TimeWithGPU,
 		TimeWithoutGPU: op.Metrics.TimeWithoutGPU,
 	}
 }
@@ -693,10 +691,8 @@ func (op *OptimizedProcessor) GetSystemStatus() map[string]interface{} {
 		"resumed_jobs":     optMetrics.ResumedJobs,
 		"cache_hits":       optMetrics.CacheHits,
 		"cache_misses":     optMetrics.CacheMisses,
-		"gpu_accelerated":  optMetrics.GPUAccelerated,
 		"cpu_processed":    optMetrics.CPUProcessed,
 		"average_time":     optMetrics.AverageTime.String(),
-		"time_with_gpu":    optMetrics.TimeWithGPU.String(),
 		"time_without_gpu": optMetrics.TimeWithoutGPU.String(),
 	}
 
@@ -714,8 +710,8 @@ func (op *OptimizedProcessor) updateMetrics(metricType string, duration time.Dur
 		op.Metrics.CompletedJobs++
 		op.Metrics.TotalTime += duration
 		if gpuUsed {
-			op.Metrics.GPUAccelerated++
-			op.Metrics.TimeWithGPU += duration
+			// GPU统计保留但不用于LLM推理
+			op.Metrics.TimeWithoutGPU += duration
 		} else {
 			op.Metrics.CPUProcessed++
 			op.Metrics.TimeWithoutGPU += duration
@@ -746,12 +742,9 @@ func (op *OptimizedProcessor) GetPerformanceReport() map[string]interface{} {
 		"performance": map[string]interface{}{
 			"average_time": metrics.AverageTime.String(),
 			"total_time":   metrics.TotalTime.String(),
-			"gpu_acceleration": map[string]interface{}{
-				"gpu_jobs":    metrics.GPUAccelerated,
-				"cpu_jobs":    metrics.CPUProcessed,
-				"gpu_time":    metrics.TimeWithGPU.String(),
-				"cpu_time":    metrics.TimeWithoutGPU.String(),
-				"gpu_speedup": calculateSpeedup(metrics.TimeWithGPU, metrics.GPUAccelerated, metrics.TimeWithoutGPU, metrics.CPUProcessed),
+			"processing_efficiency": map[string]interface{}{
+				"cpu_jobs": metrics.CPUProcessed,
+				"cpu_time": metrics.TimeWithoutGPU.String(),
 			},
 		},
 		"cache": map[string]interface{}{
@@ -765,22 +758,6 @@ func (op *OptimizedProcessor) GetPerformanceReport() map[string]interface{} {
 	}
 
 	return report
-}
-
-// calculateSpeedup 计算GPU加速比
-func calculateSpeedup(gpuTime time.Duration, gpuJobs int64, cpuTime time.Duration, cpuJobs int64) float64 {
-	if gpuJobs == 0 || cpuJobs == 0 {
-		return 0
-	}
-
-	avgGPUTime := float64(gpuTime) / float64(gpuJobs)
-	avgCPUTime := float64(cpuTime) / float64(cpuJobs)
-
-	if avgGPUTime == 0 {
-		return 0
-	}
-
-	return avgCPUTime / avgGPUTime
 }
 
 // submitJobDirectly 直接提交任务（不依赖ConcurrentProcessor）

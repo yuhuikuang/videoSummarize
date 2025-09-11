@@ -92,7 +92,6 @@ type OptimizedStep struct {
 
 // OptimizationMetrics 优化指标
 type OptimizationMetrics struct {
-	GPUAccelerated    bool    `json:"gpu_accelerated"`
 	CacheHits         int     `json:"cache_hits"`
 	CacheMisses       int     `json:"cache_misses"`
 	Resumed           bool    `json:"resumed"`
@@ -110,7 +109,7 @@ type SystemMetrics struct {
 	GPUCount        int     `json:"gpu_count"`
 	GPUMemoryTotal  int64   `json:"gpu_memory_total_mb"`
 	GPUMemoryUsed   int64   `json:"gpu_memory_used_mb"`
-	GPUUtilization  float64 `json:"gpu_utilization_percent"`
+	GPUUtilization  float64 `json:"gpu_utilization"` // GPU使用率，仅用于Whisper等非LLM任务
 }
 
 // OptimizedBatchStats 优化批量统计
@@ -138,10 +137,8 @@ type OptimizedVideoStats struct {
 	AverageTime    time.Duration `json:"average_time"`
 	MinTime        time.Duration `json:"min_time"`
 	MaxTime        time.Duration `json:"max_time"`
-	GPUAccelerated int           `json:"gpu_accelerated"`
 	CacheHits      int           `json:"cache_hits"`
 	ResumedRuns    int           `json:"resumed_runs"`
-	SpeedupWithGPU float64       `json:"speedup_with_gpu"`
 }
 
 // OptimizedGroupComparison 优化组对比
@@ -150,14 +147,12 @@ type OptimizedGroupComparison struct {
 	TotalTests           int           `json:"total_tests"`
 	SuccessfulTests      int           `json:"successful_tests"`
 	AverageTime          time.Duration `json:"average_time"`
-	GPUAccelerated       int           `json:"gpu_accelerated"`
 	CacheHits            int           `json:"cache_hits"`
 	ConcurrentEfficiency float64       `json:"concurrent_efficiency"`
 }
 
 // OptimizationSummary 优化总结
 type OptimizationSummary struct {
-	GPUSpeedup         float64 `json:"gpu_speedup"`
 	CacheHitRate       float64 `json:"cache_hit_rate"`
 	ConcurrencyGain    float64 `json:"concurrency_gain"`
 	OverallImprovement float64 `json:"overall_improvement"`
@@ -343,9 +338,7 @@ func (obt *OptimizedBatchTest) ProcessVideoOptimized(videoFile string, groupID i
 		}
 
 		// 更新优化指标
-		if stepResult.GPUUsed {
-			result.Optimizations.GPUAccelerated = true
-		}
+		// GPU仅用于Whisper等非LLM任务，不记录LLM推理相关指标
 		if stepResult.CacheHit {
 			result.Optimizations.CacheHits++
 		} else {
@@ -364,9 +357,8 @@ func (obt *OptimizedBatchTest) ProcessVideoOptimized(videoFile string, groupID i
 	result.Optimizations.SpeedupFactor = obt.calculateSpeedupFactor(result)
 	result.Optimizations.EfficiencyGain = obt.calculateEfficiencyGain(result)
 
-	log.Printf("视频处理完成: %s (成功: %v, 耗时: %v, GPU: %v, 缓存命中: %d)",
-		videoFile, result.Success, result.TotalDuration,
-		result.Optimizations.GPUAccelerated, result.Optimizations.CacheHits)
+	log.Printf("视频处理完成: %s (成功: %v, 耗时: %v, 缓存命中: %d)",
+		videoFile, result.Success, result.TotalDuration, result.Optimizations.CacheHits)
 
 	return result
 }
@@ -408,8 +400,8 @@ func (obt *OptimizedBatchTest) executeOptimizedStep(stepName, videoFile string, 
 		step.CacheHit = true
 		step.Duration = baseTime / 10 // 缓存命中大幅减少时间
 	} else {
-		// 检查GPU加速
-		if obt.Processor.Config.EnableGPU && obt.Processor.GPUAccelerator != nil {
+		// 检查GPU加速（对于Whisper等非-LLM任务）
+		if obt.Processor.Config.EnableGPU && obt.Processor.GPUAccelerator != nil && stepName == "asr" {
 			step.GPUUsed = true
 			step.Duration = time.Duration(float64(baseTime) / gpuSpeedup)
 		} else {
@@ -521,34 +513,23 @@ func (obt *OptimizedBatchTest) getCurrentCPUUsage() float64 {
 
 // calculateSpeedupFactor 计算加速因子
 func (obt *OptimizedBatchTest) calculateSpeedupFactor(result *OptimizedBatchResult) float64 {
-	if !result.Optimizations.GPUAccelerated {
-		return 1.0
+	// 基于缓存和并发计算加速因子
+	cacheHitFactor := 1.0
+	if result.Optimizations.CacheHits > 0 {
+		cacheHitFactor = 2.0 // 缓存命中2倍加速
 	}
 
-	// 基于GPU使用情况计算加速因子
-	gpuSteps := 0
-	for _, step := range result.Steps {
-		if step.GPUUsed {
-			gpuSteps++
-		}
+	concurrentFactor := float64(result.Optimizations.ConcurrentWorkers)
+	if concurrentFactor < 1.0 {
+		concurrentFactor = 1.0
 	}
 
-	if gpuSteps == 0 {
-		return 1.0
-	}
-
-	// 估算加速因子（2-5倍之间）
-	return 2.0 + float64(gpuSteps)*0.75
+	return cacheHitFactor * concurrentFactor
 }
 
 // calculateEfficiencyGain 计算效率提升
 func (obt *OptimizedBatchTest) calculateEfficiencyGain(result *OptimizedBatchResult) float64 {
 	gain := 0.0
-
-	// GPU加速贡献
-	if result.Optimizations.GPUAccelerated {
-		gain += 60.0 // 60%提升
-	}
 
 	// 缓存命中贡献
 	cacheHitRate := float64(result.Optimizations.CacheHits) / float64(result.Optimizations.CacheHits+result.Optimizations.CacheMisses)
@@ -634,8 +615,6 @@ func (obt *OptimizedBatchTest) calculateVideoStats(videoFile string) *OptimizedV
 	}
 
 	var totalTime time.Duration
-	var gpuTime, cpuTime time.Duration
-	var gpuCount, cpuCount int
 
 	for _, result := range obt.Results {
 		if result.VideoFile == videoFile {
@@ -649,15 +628,6 @@ func (obt *OptimizedBatchTest) calculateVideoStats(videoFile string) *OptimizedV
 				}
 				if result.TotalDuration > stats.MaxTime {
 					stats.MaxTime = result.TotalDuration
-				}
-
-				if result.Optimizations.GPUAccelerated {
-					stats.GPUAccelerated++
-					gpuTime += result.TotalDuration
-					gpuCount++
-				} else {
-					cpuTime += result.TotalDuration
-					cpuCount++
 				}
 
 				stats.CacheHits += result.Optimizations.CacheHits
@@ -674,13 +644,6 @@ func (obt *OptimizedBatchTest) calculateVideoStats(videoFile string) *OptimizedV
 	if stats.SuccessfulRuns > 0 {
 		stats.AverageTime = totalTime / time.Duration(stats.SuccessfulRuns)
 		stats.SuccessRate = float64(stats.SuccessfulRuns) / float64(stats.TotalAttempts) * 100
-
-		// 计算GPU加速比
-		if gpuCount > 0 && cpuCount > 0 {
-			avgGPUTime := gpuTime / time.Duration(gpuCount)
-			avgCPUTime := cpuTime / time.Duration(cpuCount)
-			stats.SpeedupWithGPU = float64(avgCPUTime) / float64(avgGPUTime)
-		}
 	}
 
 	return stats
@@ -701,10 +664,6 @@ func (obt *OptimizedBatchTest) calculateGroupStats(groupID int) *OptimizedGroupC
 			if result.Success {
 				successCount++
 				totalTime += result.TotalDuration
-			}
-
-			if result.Optimizations.GPUAccelerated {
-				stats.GPUAccelerated++
 			}
 
 			stats.CacheHits += result.Optimizations.CacheHits
@@ -728,31 +687,14 @@ func (obt *OptimizedBatchTest) calculateGroupStats(groupID int) *OptimizedGroupC
 func (obt *OptimizedBatchTest) calculateOptimizationSummary() *OptimizationSummary {
 	summary := &OptimizationSummary{}
 
-	var gpuTime, cpuTime time.Duration
-	var gpuCount, cpuCount int
 	totalCacheHits := 0
 	totalCacheAttempts := 0
 
 	for _, result := range obt.Results {
 		if result.Success {
-			if result.Optimizations.GPUAccelerated {
-				gpuTime += result.TotalDuration
-				gpuCount++
-			} else {
-				cpuTime += result.TotalDuration
-				cpuCount++
-			}
-
 			totalCacheHits += result.Optimizations.CacheHits
 			totalCacheAttempts += result.Optimizations.CacheHits + result.Optimizations.CacheMisses
 		}
-	}
-
-	// GPU加速比
-	if gpuCount > 0 && cpuCount > 0 {
-		avgGPUTime := gpuTime / time.Duration(gpuCount)
-		avgCPUTime := cpuTime / time.Duration(cpuCount)
-		summary.GPUSpeedup = float64(avgCPUTime) / float64(avgGPUTime)
 	}
 
 	// 缓存命中率
@@ -764,7 +706,7 @@ func (obt *OptimizedBatchTest) calculateOptimizationSummary() *OptimizationSumma
 	summary.ConcurrencyGain = float64(obt.Processor.Config.MaxWorkers) * 0.8 // 估算80%的并发效率
 
 	// 整体改进
-	summary.OverallImprovement = (summary.GPUSpeedup-1)*30 + summary.CacheHitRate*0.3 + summary.ConcurrencyGain*0.1
+	summary.OverallImprovement = summary.CacheHitRate*0.3 + summary.ConcurrencyGain*0.1
 
 	// 资源效率
 	summary.ResourceEfficiency = 85.0 // 基于系统资源使用情况的估算
@@ -904,7 +846,8 @@ func (obt *OptimizedBatchTest) PrintOptimizedSummary(stats *OptimizedBatchStats)
 	log.Printf("平均耗时: %v", stats.AverageDuration)
 
 	log.Println("\n=== 优化效果 ===")
-	log.Printf("GPU加速比: %.2fx", stats.OptimizationSummary.GPUSpeedup)
+	// GPU功能仅用于Whisper等非LLM任务
+	log.Printf("缓存命中率: %.2f%%", stats.OptimizationSummary.CacheHitRate)
 	log.Printf("缓存命中率: %.2f%%", stats.OptimizationSummary.CacheHitRate)
 	log.Printf("并发增益: %.2f%%", stats.OptimizationSummary.ConcurrencyGain)
 	log.Printf("整体性能提升: %.2f%%", stats.OptimizationSummary.OverallImprovement)
@@ -937,7 +880,7 @@ func (obt *OptimizedBatchTest) PrintOptimizedSummary(stats *OptimizedBatchStats)
 		log.Printf("%s:", filepath.Base(videoFile))
 		log.Printf("  成功率: %.2f%% (%d/%d)", videoStats.SuccessRate, videoStats.SuccessfulRuns, videoStats.TotalAttempts)
 		log.Printf("  平均时间: %v (最小: %v, 最大: %v)", videoStats.AverageTime, videoStats.MinTime, videoStats.MaxTime)
-		log.Printf("  GPU加速: %d次, 加速比: %.2fx", videoStats.GPUAccelerated, videoStats.SpeedupWithGPU)
+		log.Printf("  缓存命中: %d次", videoStats.CacheHits)
 		log.Printf("  缓存命中: %d次, 断点续传: %d次", videoStats.CacheHits, videoStats.ResumedRuns)
 	}
 }

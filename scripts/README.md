@@ -141,7 +141,6 @@ scripts 模块包含用于性能测试、批量处理和测试数据生成的脚
 - `CPUUsage`: CPU使用率
 
 **OptimizationMetrics**
-- `GPUAccelerated`: GPU加速标志
 - `CacheHits/CacheMisses`: 缓存命中/未命中次数
 - `Resumed`: 恢复标志
 - `ConcurrentWorkers`: 并发工作器数
@@ -153,7 +152,6 @@ scripts 模块包含用于性能测试、批量处理和测试数据生成的脚
 - `MemoryTotal/Used/Available`: 内存统计
 - `GPUCount`: GPU数量
 - `GPUMemoryTotal/Used`: GPU内存统计
-- `GPUUtilization`: GPU利用率
 
 **OptimizedBatchStats**
 - `TotalTests`: 总测试数
@@ -172,21 +170,17 @@ scripts 模块包含用于性能测试、批量处理和测试数据生成的脚
 - `SuccessfulRuns/FailedRuns`: 成功/失败运行次数
 - `SuccessRate`: 成功率
 - `AverageTime/MinTime/MaxTime`: 时间统计
-- `GPUAccelerated`: GPU加速次数
 - `CacheHits`: 缓存命中次数
 - `ResumedRuns`: 恢复运行次数
-- `SpeedupWithGPU`: GPU加速倍数
 
 **OptimizedGroupComparison**
 - `GroupID`: 组ID
 - `TotalTests/SuccessfulTests`: 测试统计
 - `AverageTime`: 平均时间
-- `GPUAccelerated`: GPU加速次数
 - `CacheHits`: 缓存命中次数
 - `ConcurrentEfficiency`: 并发效率
 
 **OptimizationSummary**
-- `GPUSpeedup`: GPU加速倍数
 - `CacheHitRate`: 缓存命中率
 - `ConcurrencyGain`: 并发收益
 - `OverallImprovement`: 总体改进

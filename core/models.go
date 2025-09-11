@@ -266,11 +266,9 @@ type ProcessorMetrics struct {
 	ResumedJobs    int64         `json:"resumed_jobs"`
 	CacheHits      int64         `json:"cache_hits"`
 	CacheMisses    int64         `json:"cache_misses"`
-	GPUAccelerated int64         `json:"gpu_accelerated"`
 	CPUProcessed   int64         `json:"cpu_processed"`
 	AverageTime    time.Duration `json:"average_time"`
 	TotalTime      time.Duration `json:"total_time"`
-	TimeWithGPU    time.Duration `json:"time_with_gpu"`
 	TimeWithoutGPU time.Duration `json:"time_without_gpu"`
 	Throughput     float64       `json:"throughput"` // jobs per minute
 	StartTime      time.Time     `json:"start_time"`
@@ -314,11 +312,9 @@ type OptimizedMetrics struct {
 	ResumedJobs    int64         `json:"resumed_jobs"`
 	CacheHits      int64         `json:"cache_hits"`
 	CacheMisses    int64         `json:"cache_misses"`
-	GPUAccelerated int64         `json:"gpu_accelerated"`
 	CPUProcessed   int64         `json:"cpu_processed"`
 	AverageTime    time.Duration `json:"average_time"`
 	TotalTime      time.Duration `json:"total_time"`
-	TimeWithGPU    time.Duration `json:"time_with_gpu"`
 	TimeWithoutGPU time.Duration `json:"time_without_gpu"`
 	Throughput     float64       `json:"throughput"`
 	LastUpdate     time.Time     `json:"last_update"`
