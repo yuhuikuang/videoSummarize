@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"runtime"
 	"time"
@@ -54,7 +53,7 @@ func (h *MonitoringHandlers) HealthCheckHandler(w http.ResponseWriter, r *http.R
 		health["status"] = "degraded"
 	}
 
-	writeJSON(w, http.StatusOK, health)
+	core.WriteJSON(w, http.StatusOK, health)
 }
 
 // StatsHandler 统计信息处理器
@@ -86,7 +85,7 @@ func (h *MonitoringHandlers) StatsHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	writeJSON(w, http.StatusOK, stats)
+	core.WriteJSON(w, http.StatusOK, stats)
 }
 
 // DiagnosticsHandler 诊断信息处理器
@@ -115,19 +114,8 @@ func (h *MonitoringHandlers) DiagnosticsHandler(w http.ResponseWriter, r *http.R
 		},
 	}
 
-	writeJSON(w, http.StatusOK, diagnostics)
+	core.WriteJSON(w, http.StatusOK, diagnostics)
 }
 
 // 启动时间记录
 var startTime = time.Now()
-
-// writeJSON 写入JSON响应
-func writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-	}
-}

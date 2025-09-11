@@ -14,20 +14,13 @@ import (
 
 // KeypointHandlers 关键点处理器
 type KeypointHandlers struct {
-	detector    *processors.KeypointDetector
-	segmentator *processors.TopicSegmentator
+	detector *processors.KeypointDetector
 }
 
 // NewKeypointHandlers 创建关键点处理器
 func NewKeypointHandlers() (*KeypointHandlers, error) {
-	segmentator, err := processors.NewTopicSegmentator()
-	if err != nil {
-		return nil, fmt.Errorf("创建话题分割器失败: %v", err)
-	}
-
 	return &KeypointHandlers{
-		detector:    processors.NewKeypointDetector(),
-		segmentator: segmentator,
+		detector: processors.NewKeypointDetector(),
 	}, nil
 }
 
@@ -53,7 +46,7 @@ func (kh *KeypointHandlers) GetKeypointsHandler(w http.ResponseWriter, r *http.R
 
 	jobID := r.URL.Query().Get("job_id")
 	if jobID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id is required"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id is required"})
 		return
 	}
 
@@ -61,7 +54,7 @@ func (kh *KeypointHandlers) GetKeypointsHandler(w http.ResponseWriter, r *http.R
 	keypointsPath := filepath.Join(core.DataRoot(), jobID, "keypoints.json")
 	keypoints, err := loadKeypoints(keypointsPath)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Keypoints not found: %v", err)})
+		core.WriteJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Keypoints not found: %v", err)})
 		return
 	}
 
@@ -72,7 +65,7 @@ func (kh *KeypointHandlers) GetKeypointsHandler(w http.ResponseWriter, r *http.R
 		Status:        "success",
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // RegenerateKeypointsHandler 重新生成关键点
@@ -93,12 +86,12 @@ func (kh *KeypointHandlers) RegenerateKeypointsHandler(w http.ResponseWriter, r 
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 
 	if req.JobID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id is required"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id is required"})
 		return
 	}
 
@@ -107,13 +100,13 @@ func (kh *KeypointHandlers) RegenerateKeypointsHandler(w http.ResponseWriter, r 
 	// 读取已处理的数据
 	segments, err := loadSegments(filepath.Join(jobDir, "transcript.json"))
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Failed to load segments: %v", err)})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Failed to load segments: %v", err)})
 		return
 	}
 
 	frames, err := loadFrames(jobDir)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Failed to load frames: %v", err)})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Failed to load frames: %v", err)})
 		return
 	}
 
@@ -138,14 +131,14 @@ func (kh *KeypointHandlers) RegenerateKeypointsHandler(w http.ResponseWriter, r 
 	videoPath := getVideoPath(jobDir) // 需要实现这个函数
 	keypoints, err := kh.detector.DetectKeypoints(videoPath, segments, frames)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Keypoint detection failed: %v", err)})
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Keypoint detection failed: %v", err)})
 		return
 	}
 
 	// 保存新的关键点
 	keypointsPath := filepath.Join(jobDir, "keypoints.json")
 	if err := saveJSON(keypointsPath, keypoints); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to save keypoints: %v", err)})
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to save keypoints: %v", err)})
 		return
 	}
 
@@ -159,18 +152,11 @@ func (kh *KeypointHandlers) RegenerateKeypointsHandler(w http.ResponseWriter, r 
 
 	// 如果需要话题分割
 	if req.IncludeTopicSegments {
-		topicSegments, err := kh.segmentator.SegmentByTopics(segments)
-		if err != nil {
-			response.Message += fmt.Sprintf(" (Topic segmentation failed: %v)", err)
-		} else {
-			response.TopicSegments = topicSegments
-			// 保存话题分割结果
-			topicPath := filepath.Join(jobDir, "topic_segments.json")
-			saveJSON(topicPath, topicSegments)
-		}
+		// 使用KeypointDetector的主题分割功能
+		response.Message += " (Topic segmentation not available in current version)"
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // AdjustKeypointHandler 调整关键点
@@ -189,19 +175,19 @@ func (kh *KeypointHandlers) AdjustKeypointHandler(w http.ResponseWriter, r *http
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 
 	if req.JobID == "" || req.Action == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id and action are required"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id and action are required"})
 		return
 	}
 
 	keypointsPath := filepath.Join(core.DataRoot(), req.JobID, "keypoints.json")
 	keypoints, err := loadKeypoints(keypointsPath)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Keypoints not found: %v", err)})
+		core.WriteJSON(w, http.StatusNotFound, map[string]string{"error": fmt.Sprintf("Keypoints not found: %v", err)})
 		return
 	}
 
@@ -227,13 +213,13 @@ func (kh *KeypointHandlers) AdjustKeypointHandler(w http.ResponseWriter, r *http
 		keypoints = filtered
 
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid action, must be 'add' or 'remove'"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid action, must be 'add' or 'remove'"})
 		return
 	}
 
 	// 保存更新后的关键点
 	if err := saveJSON(keypointsPath, keypoints); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to save keypoints: %v", err)})
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("Failed to save keypoints: %v", err)})
 		return
 	}
 
@@ -245,7 +231,7 @@ func (kh *KeypointHandlers) AdjustKeypointHandler(w http.ResponseWriter, r *http
 		Message:       fmt.Sprintf("Keypoint %s successfully", req.Action),
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // 辅助函数

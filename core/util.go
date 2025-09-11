@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -17,10 +18,16 @@ import (
 
 func DataRoot() string { return filepath.Join(".", "data") }
 
-func newID() string {
+// NewID 生成随机32位ID - 统一的ID生成函数
+func NewID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+// newID 内部使用的ID生成函数，为了兼容性保留
+func newID() string {
+	return NewID()
 }
 
 func runFFmpeg(args []string) error {
@@ -92,7 +99,9 @@ func probeDuration(path string) (float64, error) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil { return 0, err }
+	if err := cmd.Run(); err != nil {
+		return 0, err
+	}
 	s := strings.TrimSpace(out.String())
 	return strconv.ParseFloat(s, 64)
 }
@@ -102,11 +111,21 @@ func ProbeDuration(path string) (float64, error) {
 	return probeDuration(path)
 }
 
-// WriteJSON 写入JSON响应
+// WriteJSON 写入JSON响应 - 统一的JSON响应函数
 func WriteJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(data); err != nil {
+		log.Printf("Error encoding JSON response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
+
+// WriteJSONWithStatus 写入带状态码的JSON响应的便捷函数
+func WriteJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}) {
+	WriteJSON(w, statusCode, data)
 }
 
 func mustJSON(v any) []byte {
@@ -114,18 +133,35 @@ func mustJSON(v any) []byte {
 	return b
 }
 
+// TruncateWords 导出版本的truncateWords函数
+func TruncateWords(s string, n int) string {
+	return truncateWords(s, n)
+}
+
 func truncateWords(s string, n int) string {
 	toks := tokenize(s)
-	if len(toks) <= n { return s }
+	if len(toks) <= n {
+		return s
+	}
 	return strings.Join(toks[:n], " ") + "..."
 }
 
-func absFloat(x float64) float64 { if x < 0 { return -x }; return x }
+func absFloat(x float64) float64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
 
-func min(a, b int) int { if a < b { return a }; return b }
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 var nonLetter = regexp.MustCompile(`[^a-zA-Z0-9\p{Han}]+`)
-var stops = map[string]struct{}{"the":{},"and":{},"a":{},"an":{},"of":{},"to":{},"in":{},"is":{},"are":{},"for":{},"on":{},"with":{},"that":{},"this":{},"it":{},"as":{},"at":{},"be":{},"by":{},"from":{}}
+var stops = map[string]struct{}{"the": {}, "and": {}, "a": {}, "an": {}, "of": {}, "to": {}, "in": {}, "is": {}, "are": {}, "for": {}, "on": {}, "with": {}, "that": {}, "this": {}, "it": {}, "as": {}, "at": {}, "be": {}, "by": {}, "from": {}}
 
 func tokenize(s string) []string {
 	s = strings.ToLower(s)
@@ -133,8 +169,12 @@ func tokenize(s string) []string {
 	parts := strings.Fields(s)
 	out := make([]string, 0, len(parts))
 	for _, p := range parts {
-		if _, ok := stops[p]; ok { continue }
-		if p == "" { continue }
+		if _, ok := stops[p]; ok {
+			continue
+		}
+		if p == "" {
+			continue
+		}
 		out = append(out, p)
 	}
 	return out

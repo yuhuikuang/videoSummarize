@@ -27,7 +27,7 @@ func NewBatchHandlers(rm *core.ResourceManager, pp *processors.ParallelProcessor
 // ProcessBatchHandler 批处理请求处理器
 func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
 			"error":   "Method not allowed",
 			"message": "Only POST method is supported",
 		})
@@ -41,7 +41,7 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&batchRequest); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		core.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":   "Invalid request body",
 			"message": err.Error(),
 		})
@@ -49,7 +49,7 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	if len(batchRequest.Videos) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		core.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":   "No videos specified",
 			"message": "At least one video must be provided",
 		})
@@ -58,7 +58,7 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 
 	// 检查处理器是否可用
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Processor unavailable",
 			"message": "Parallel processor is not initialized",
 		})
@@ -73,14 +73,14 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 	})
 
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]interface{}{
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]interface{}{
 			"error":   "Failed to start batch processing",
 			"message": err.Error(),
 		})
 		return
 	}
 
-	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+	core.WriteJSON(w, http.StatusAccepted, map[string]interface{}{
 		"message":  "Batch processing started",
 		"batch_id": batchID,
 		"status":   "queued",
@@ -93,7 +93,7 @@ func (h *BatchHandlers) ProcessBatchHandler(w http.ResponseWriter, r *http.Reque
 func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查处理器是否可用
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Processor unavailable",
 			"message": "Parallel processor is not initialized",
 		})
@@ -109,7 +109,7 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 	if pipelineID != "" {
 		// 返回特定管道的状态
 		pipelineStatus := h.processor.GetPipelineStatus(pipelineID)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"type":      "pipeline",
 			"data":      pipelineStatus,
 			"timestamp": time.Now().Unix(),
@@ -120,7 +120,7 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 	if jobID != "" {
 		// 通过JobID查询管道状态
 		pipelineStatus := h.processor.GetPipelineStatusByJobID(jobID)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"type":      "pipeline_by_job",
 			"data":      pipelineStatus,
 			"timestamp": time.Now().Unix(),
@@ -131,7 +131,7 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 	if batchID != "" {
 		// 返回特定批处理作业的状态
 		batchStatus := h.processor.GetBatchJobStatus(batchID)
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"type":      "batch_job",
 			"data":      batchStatus,
 			"timestamp": time.Now().Unix(),
@@ -144,7 +144,7 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 		pipelinesByStatus := h.processor.GetPipelinesByStatus(status)
 		batchJobsByStatus := h.processor.GetBatchJobsByStatus(status)
 
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"type": "status_filter",
 			"data": map[string]interface{}{
 				"pipelines":  pipelinesByStatus,
@@ -178,7 +178,7 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 		"timestamp":  time.Now().Unix(),
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"type":      "unified_overview",
 		"data":      unifiedStatus,
 		"timestamp": time.Now().Unix(),
@@ -189,7 +189,7 @@ func (h *BatchHandlers) PipelineStatusHandler(w http.ResponseWriter, r *http.Req
 func (h *BatchHandlers) UnifiedStatusHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查处理器是否可用
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Processor unavailable",
 			"message": "Parallel processor is not initialized",
 		})
@@ -248,7 +248,7 @@ func (h *BatchHandlers) UnifiedStatusHandler(w http.ResponseWriter, r *http.Requ
 		"resources": resourceStatus,
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"type":      "unified_status",
 		"data":      unifiedStatus,
 		"timestamp": time.Now().Unix(),
@@ -259,7 +259,7 @@ func (h *BatchHandlers) UnifiedStatusHandler(w http.ResponseWriter, r *http.Requ
 func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查处理器是否可用
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Processor unavailable",
 			"message": "Parallel processor is not initialized",
 		})
@@ -281,7 +281,7 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 			"comprehensive_metrics": h.processor.GetComprehensiveMetrics(),
 			"timestamp":             time.Now().Unix(),
 		}
-		writeJSON(w, http.StatusOK, config)
+		core.WriteJSON(w, http.StatusOK, config)
 
 	case http.MethodPost:
 		// 更新批处理配置
@@ -292,7 +292,7 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&configUpdate); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			core.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{
 				"error":   "Invalid configuration",
 				"message": err.Error(),
 			})
@@ -301,14 +301,14 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 
 		// 注意：当前processors.ParallelProcessor不支持动态配置更新
 		// 这里返回配置接收确认，实际更新需要在processors包中实现
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"message": "Configuration update received (dynamic config update to be implemented)",
 			"config":  configUpdate,
 			"note":    "Processor restart may be required for configuration changes",
 		})
 
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
 			"error":   "Method not allowed",
 			"message": "Only GET and POST methods are supported",
 		})
@@ -319,7 +319,7 @@ func (h *BatchHandlers) BatchConfigHandler(w http.ResponseWriter, r *http.Reques
 func (h *BatchHandlers) BatchMetricsHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查处理器是否可用
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Processor unavailable",
 			"message": "Parallel processor is not initialized",
 		})
@@ -365,7 +365,7 @@ func (h *BatchHandlers) BatchMetricsHandler(w http.ResponseWriter, r *http.Reque
 		metrics["resource_usage"] = h.resourceManager.GetResourceStatus()
 	}
 
-	writeJSON(w, http.StatusOK, metrics)
+	core.WriteJSON(w, http.StatusOK, metrics)
 }
 
 // generateBatchID 生成批处理ID
@@ -377,7 +377,7 @@ func generateBatchID() string {
 func (h *BatchHandlers) CancelHandler(w http.ResponseWriter, r *http.Request) {
 	// 检查处理器是否可用
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Processor unavailable",
 			"message": "Parallel processor is not initialized",
 		})
@@ -394,7 +394,7 @@ func (h *BatchHandlers) CancelHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	} else if r.Method != http.MethodGet {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
 			"error":   "Method not allowed",
 			"message": "Only GET and POST methods are supported",
 		})
@@ -451,16 +451,16 @@ func (h *BatchHandlers) CancelHandler(w http.ResponseWriter, r *http.Request) {
 		target = "batch"
 		targetID = req.BatchID
 	} else {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"error":   "Missing parameters",
-			"message": "One of pipeline_id, job_id, or batch_id must be provided",
+		core.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error":     "Missing parameters",
+			"message":   "One of pipeline_id, job_id, or batch_id must be provided",
 			"timestamp": time.Now().Unix(),
 		})
 		return
 	}
 
 	if len(pipelineIDs) == 0 {
-		writeJSON(w, http.StatusNotFound, map[string]interface{}{
+		core.WriteJSON(w, http.StatusNotFound, map[string]interface{}{
 			"error":     "No pipelines found to cancel",
 			"target":    target,
 			"target_id": targetID,
@@ -483,13 +483,13 @@ func (h *BatchHandlers) CancelHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"message":    "Cancel request processed",
-		"target":     target,
-		"target_id":  targetID,
-		"total":      len(pipelineIDs),
-		"cancelled":  success,
-		"results":    results,
-		"timestamp":  time.Now().Unix(),
+	core.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"message":   "Cancel request processed",
+		"target":    target,
+		"target_id": targetID,
+		"total":     len(pipelineIDs),
+		"cancelled": success,
+		"results":   results,
+		"timestamp": time.Now().Unix(),
 	})
 }

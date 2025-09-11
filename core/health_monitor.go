@@ -3,7 +3,6 @@ package core
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -278,7 +277,7 @@ func hasFile(dir, name string) bool {
 // statsHandler 处理统计信息端点
 func statsHandler(w http.ResponseWriter, r *http.Request) {
 	stats := collectProcessingStats()
-	writeJSON(w, http.StatusOK, stats)
+	WriteJSON(w, http.StatusOK, stats)
 }
 
 // collectProcessingStats 收集处理统计信息
@@ -394,7 +393,7 @@ func diagnosticsHandler(w http.ResponseWriter, r *http.Request) {
 		"system_info": collectSystemDiagnostics(),
 	}
 
-	writeJSON(w, http.StatusOK, diagnostics)
+	WriteJSON(w, http.StatusOK, diagnostics)
 }
 
 // collectHealthSummary 收集健康状态摘要
@@ -466,15 +465,6 @@ func collectSystemDiagnostics() map[string]interface{} {
 		"data_root":     DataRoot(),
 		"timestamp":     time.Now(),
 		"memory_stats":  getMemoryStats(),
-	}
-}
-
-// writeJSON 写入JSON响应
-func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		log.Printf("Error encoding JSON response: %v", err)
 	}
 }
 

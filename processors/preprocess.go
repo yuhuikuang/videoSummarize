@@ -32,7 +32,7 @@ func PreprocessWithAudioEnhancementHandler(w http.ResponseWriter, r *http.Reques
 
 func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAudioPreprocessing bool) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
 	}
 
@@ -61,7 +61,7 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 
 	// 如果没有提供job_id，则生成新的
 	if jobID == "" {
-		jobID = newID()
+		jobID = core.NewID()
 	}
 
 	jobDir := filepath.Join(core.DataRoot(), jobID)
@@ -72,14 +72,14 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 	_, err := rm.AllocateResources(jobID, "preprocess", "normal")
 	if err != nil {
 		log.Printf("Failed to allocate resources for job %s: %v", jobID, err)
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("Resource allocation failed: %v", err)})
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("Resource allocation failed: %v", err)})
 		return
 	}
 	defer rm.ReleaseResources(jobID)
 
 	if err := os.MkdirAll(framesDir, 0755); err != nil {
 		log.Printf("Error creating job directory: %v", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create job directory"})
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "Failed to create job directory"})
 		return
 	}
 
@@ -88,7 +88,7 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 	if len(ct) >= 19 && ct[:19] == "multipart/form-data" {
 		inputPath, err = saveUploadedVideo(r, jobDir)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 	} else {
@@ -96,17 +96,17 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 			VideoPath string `json:"video_path"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+			core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
 			return
 		}
 		if body.VideoPath == "" {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "video_path required"})
+			core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "video_path required"})
 			return
 		}
 		// Copy provided file into job dir for processing
 		dst := filepath.Join(jobDir, "input"+filepath.Ext(body.VideoPath))
 		if err := copyFile(body.VideoPath, dst); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
 		inputPath = dst
@@ -125,13 +125,13 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 	if enableAudioPreprocessing {
 		if err := extractAudioWithPreprocessing(inputPath, audioPath, true); err != nil {
 			log.Printf("[%s] Audio extraction with preprocessing failed: %v", jobID, err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract and preprocess audio: %v", err)})
+			core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract and preprocess audio: %v", err)})
 			return
 		}
 	} else {
 		if err := extractAudio(inputPath, audioPath); err != nil {
 			log.Printf("[%s] Audio extraction failed: %v", jobID, err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract audio: %v", err)})
+			core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract audio: %v", err)})
 			return
 		}
 	}
@@ -141,7 +141,7 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 	rm.UpdateJobStep(jobID, "frame_extraction")
 	if err := extractFramesAtInterval(inputPath, framesDir, 5); err != nil {
 		log.Printf("[%s] Frame extraction failed: %v", jobID, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract frames: %v", err)})
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": fmt.Sprintf("extract frames: %v", err)})
 		return
 	}
 
@@ -151,14 +151,14 @@ func preprocessHandlerInternal(w http.ResponseWriter, r *http.Request, enableAud
 	frames, err := enumerateFramesWithTimestamps(framesDir, 5)
 	if err != nil {
 		log.Printf("[%s] Frame enumeration failed: %v", jobID, err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
 	rm.UpdateJobStep(jobID, "completed")
 	log.Printf("[%s] Preprocessing completed successfully", jobID)
 	resp := core.PreprocessResponse{JobID: jobID, AudioPath: audioPath, Frames: frames}
-	writeJSON(w, http.StatusOK, resp)
+	core.WriteJSON(w, http.StatusOK, resp)
 }
 
 func saveUploadedVideo(r *http.Request, jobDir string) (string, error) {
@@ -336,7 +336,7 @@ func preprocessVideoEnhanced(videoPath, jobID string) (*core.PreprocessResponse,
 	framesDir := filepath.Join(jobDir, "frames")
 
 	// Initialize checkpoint
-	checkpoint := &ProcessingCheckpoint{
+	checkpoint := &core.ProcessingCheckpoint{
 		JobID:       jobID,
 		StartTime:   time.Now(),
 		CurrentStep: "validation",
@@ -441,29 +441,10 @@ func createSilentAudio(outputPath string, durationSec int) error {
 var _ multipart.FileHeader
 
 // Enhanced preprocessing functions with retry and validation
-
-// VideoInfo contains basic video information
-type VideoInfo struct {
-	Duration float64 `json:"duration"`
-	Width    int     `json:"width"`
-	Height   int     `json:"height"`
-	FPS      float64 `json:"fps"`
-	HasAudio bool    `json:"has_audio"`
-}
-
-// ProcessingCheckpoint tracks processing state
-type ProcessingCheckpoint struct {
-	JobID          string     `json:"job_id"`
-	StartTime      time.Time  `json:"start_time"`
-	CurrentStep    string     `json:"current_step"`
-	CompletedSteps []string   `json:"completed_steps"`
-	VideoInfo      *VideoInfo `json:"video_info,omitempty"`
-	Errors         []string   `json:"errors,omitempty"`
-	LastUpdate     time.Time  `json:"last_update"`
-}
+// 注意：VideoInfo 和 ProcessingCheckpoint 结构体已在 core.models 中统一定义
 
 // validateVideoFile checks if video file is valid and extracts basic info
-func validateVideoFile(path string) (*VideoInfo, error) {
+func validateVideoFile(path string) (*core.VideoInfo, error) {
 	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path)
 	output, err := cmd.Output()
 	if err != nil {
@@ -486,7 +467,7 @@ func validateVideoFile(path string) (*VideoInfo, error) {
 		return nil, fmt.Errorf("parse ffprobe output: %v", err)
 	}
 
-	info := &VideoInfo{}
+	info := &core.VideoInfo{}
 
 	// Parse duration
 	if probe.Format.Duration != "" {
@@ -584,7 +565,7 @@ func extractFramesEnhanced(inputPath, framesDir string, intervalSec int, maxRetr
 }
 
 // saveCheckpoint saves processing state
-func saveCheckpoint(jobDir string, checkpoint *ProcessingCheckpoint) error {
+func saveCheckpoint(jobDir string, checkpoint *core.ProcessingCheckpoint) error {
 	checkpoint.LastUpdate = time.Now()
 	checkpointPath := filepath.Join(jobDir, "checkpoint.json")
 	data, err := json.MarshalIndent(checkpoint, "", "  ")
@@ -595,13 +576,13 @@ func saveCheckpoint(jobDir string, checkpoint *ProcessingCheckpoint) error {
 }
 
 // loadCheckpoint loads processing state
-func loadCheckpoint(jobDir string) (*ProcessingCheckpoint, error) {
+func loadCheckpoint(jobDir string) (*core.ProcessingCheckpoint, error) {
 	checkpointPath := filepath.Join(jobDir, "checkpoint.json")
 	data, err := os.ReadFile(checkpointPath)
 	if err != nil {
 		return nil, err
 	}
-	var checkpoint ProcessingCheckpoint
+	var checkpoint core.ProcessingCheckpoint
 	err = json.Unmarshal(data, &checkpoint)
 	return &checkpoint, err
 }
@@ -612,7 +593,7 @@ func processVideoWithFallback(jobID, videoPath string) error {
 	framesDir := filepath.Join(jobDir, "frames")
 
 	// Initialize checkpoint
-	checkpoint := &ProcessingCheckpoint{
+	checkpoint := &core.ProcessingCheckpoint{
 		JobID:       jobID,
 		StartTime:   time.Now(),
 		CurrentStep: "validation",
@@ -673,36 +654,4 @@ func processVideoWithFallback(jobID, videoPath string) error {
 
 	log.Printf("[%s] Video preprocessing completed successfully", jobID)
 	return nil
-}
-
-// copyFileEnhanced 增强版文件复制函数，支持重试和验证
-func copyFileEnhanced(src, dst string, maxRetries int) error {
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		err := copyFile(src, dst)
-		if err == nil {
-			// 验证复制的文件
-			if srcStat, statErr := os.Stat(src); statErr == nil {
-				if dstStat, statErr2 := os.Stat(dst); statErr2 == nil {
-					if srcStat.Size() == dstStat.Size() {
-						return nil
-					}
-					err = fmt.Errorf("file size mismatch: src=%d, dst=%d", srcStat.Size(), dstStat.Size())
-				} else {
-					err = fmt.Errorf("cannot stat destination file: %v", statErr2)
-				}
-			} else {
-				err = fmt.Errorf("cannot stat source file: %v", statErr)
-			}
-		}
-
-		log.Printf("File copy attempt %d/%d failed: %v", attempt, maxRetries, err)
-
-		if attempt < maxRetries {
-			time.Sleep(time.Duration(attempt) * time.Second)
-			// 清理失败的文件
-			os.Remove(dst)
-		}
-	}
-
-	return fmt.Errorf("file copy failed after %d attempts", maxRetries)
 }

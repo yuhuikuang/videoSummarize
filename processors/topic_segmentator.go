@@ -23,18 +23,6 @@ type TopicSegmentator struct {
 	config *config.Config
 }
 
-// TopicSegment 话题片段
-type TopicSegment struct {
-	StartTime  float64        `json:"start_time"`
-	EndTime    float64        `json:"end_time"`
-	Topic      string         `json:"topic"`
-	Summary    string         `json:"summary"`
-	Importance float64        `json:"importance"` // 重要性评分
-	Keywords   []string       `json:"keywords"`
-	Segments   []core.Segment `json:"segments"`
-	IsKeypoint bool           `json:"is_keypoint"` // 是否为关键点
-}
-
 // NewTopicSegmentator 创建话题分割器
 func NewTopicSegmentator() (*TopicSegmentator, error) {
 	cfg, err := config.LoadConfig()

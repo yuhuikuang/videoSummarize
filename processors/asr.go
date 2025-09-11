@@ -61,7 +61,6 @@ func (l LocalWhisperASR) Transcribe(audioPath string) ([]core.Segment, error) {
 	return result, nil
 }
 
-
 // TranscribeHandler 导出的处理器函数
 func TranscribeHandler(w http.ResponseWriter, r *http.Request) {
 	transcribeHandler(w, r)
@@ -143,7 +142,7 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]core.Segment, error) {
 	log.Printf("Starting ASR transcription for job %s with provider: %s", jobID, config.Provider)
 
 	// 保存检查点
-	checkpoint := &ProcessingCheckpoint{
+	checkpoint := &core.ProcessingCheckpoint{
 		JobID:       jobID,
 		StartTime:   time.Now(),
 		CurrentStep: "asr_transcription",
@@ -160,7 +159,7 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]core.Segment, error) {
 
 		if err == nil {
 			// 成功
-			log.Printf("ASR transcription successful for job %s in %v, found %d segments",jobID, duration, len(segs))
+			log.Printf("ASR transcription successful for job %s in %v, found %d segments", jobID, duration, len(segs))
 
 			// 保存原始转录结果
 			jobDir := filepath.Join(core.DataRoot(), jobID)
@@ -237,7 +236,7 @@ func transcribeWithTimeout(audioPath string, config ASRConfig) ([]core.Segment, 
 	resultChan := make(chan transcribeResult, 1)
 
 	go func() {
-		prov := pickASRProviderWithConfig(config)
+		prov := pickASRProviderWithConfig()
 		segs, err := prov.Transcribe(audioPath)
 		resultChan <- transcribeResult{segments: segs, err: err}
 	}()
@@ -256,7 +255,7 @@ type transcribeResult struct {
 }
 
 // pickASRProviderWithConfig 根据配置选择ASR提供者
-func pickASRProviderWithConfig(asrConfig ASRConfig) ASRProvider {
+func pickASRProviderWithConfig() ASRProvider {
 	// 目前只实现了本地whisper
 	return LocalWhisperASR{}
 }

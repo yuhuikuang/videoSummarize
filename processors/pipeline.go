@@ -2,7 +2,6 @@ package processors
 
 import (
 	"crypto/md5"
-	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,17 +24,6 @@ func init() {
 }
 
 // 辅助函数
-func newID() string {
-	bytes := make([]byte, 16)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
-}
-
-func writeJSON(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data)
-}
 
 // PgVectorStore 类型别名
 type PgVectorStore = storage.Store
@@ -73,7 +61,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("Panic recovered in processVideoHandler: %v\n", r)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{
+			core.WriteJSON(w, http.StatusInternalServerError, map[string]string{
 				"error": "Internal server error occurred during video processing",
 			})
 		}
@@ -86,18 +74,18 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 
 	var req ProcessVideoRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 
 	if req.VideoPath == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "video_path is required"})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "video_path is required"})
 		return
 	}
 
 	// Check if video file exists
 	if _, err := os.Stat(req.VideoPath); os.IsNotExist(err) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Video file not found: %s", req.VideoPath)})
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("Video file not found: %s", req.VideoPath)})
 		return
 	}
 
@@ -130,13 +118,13 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Starting video preprocessing...")
 	// Generate job ID if not set
 	if response.JobID == "" {
-		response.JobID = newID()
+		response.JobID = core.NewID()
 	}
 	preprocessResp, err := preprocessVideo(req.VideoPath, response.JobID)
 	if err != nil {
 		response.Steps = append(response.Steps, Step{Name: "preprocess", Status: "failed", Error: err.Error()})
 		response.Message = "Video preprocessing failed"
-		writeJSON(w, http.StatusInternalServerError, response)
+		core.WriteJSON(w, http.StatusInternalServerError, response)
 		return
 	}
 	audioPath := preprocessResp.AudioPath
@@ -150,7 +138,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "failed", Error: err.Error()})
 		response.Message = "Audio transcription failed"
-		writeJSON(w, http.StatusInternalServerError, response)
+		core.WriteJSON(w, http.StatusInternalServerError, response)
 		return
 	}
 
@@ -161,15 +149,21 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	// Step 2.5: Text correction is now integrated in transcribeAudioEnhanced
 	// No separate text correction step needed
 
-	// Step 3: Generate summaries
-	fmt.Println("Starting summary generation...")
-	summarizer := pickSummaryProvider()
-	items, err := summarizer.Summarize(segments, frames)
+	// Step 3: Generate summaries - 使用新的完整文本摘要生成模式
+	fmt.Println("Starting summary generation with full text mode...")
+	items, err := SummarizeFromFullText(segments, frames, response.JobID)
 	if err != nil {
-		response.Steps = append(response.Steps, Step{Name: "summarize", Status: "failed", Error: err.Error()})
-		response.Message = "Summary generation failed"
-		writeJSON(w, http.StatusInternalServerError, response)
-		return
+		log.Printf("Full text summarization failed, falling back to traditional method: %v", err)
+		// 如果新方法失败，回退到传统方法
+		summarizer := pickSummaryProvider()
+		items, err = summarizer.Summarize(segments, frames)
+		if err != nil {
+			response.Steps = append(response.Steps, Step{Name: "summarize", Status: "failed", Error: err.Error()})
+			response.Message = "Summary generation failed"
+			core.WriteJSON(w, http.StatusInternalServerError, response)
+			return
+		}
+		response.Warnings = append(response.Warnings, "Used fallback summarization method")
 	}
 
 	// Save items
@@ -177,7 +171,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 	if err := saveJSON(itemsPath, items); err != nil {
 		response.Steps = append(response.Steps, Step{Name: "summarize", Status: "failed", Error: fmt.Sprintf("Failed to save items: %v", err)})
 		response.Message = "Failed to save items"
-		writeJSON(w, http.StatusInternalServerError, response)
+		core.WriteJSON(w, http.StatusInternalServerError, response)
 		return
 	}
 	response.Steps = append(response.Steps, Step{Name: "summarize", Status: "completed"})
@@ -242,7 +236,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 		response.Message += " (with warnings)"
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 func saveJSON(path string, data interface{}) error {

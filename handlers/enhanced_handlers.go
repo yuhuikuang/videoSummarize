@@ -12,7 +12,6 @@ import (
 	"videoSummarize/core"
 	"videoSummarize/processors"
 	"videoSummarize/storage"
-	"videoSummarize/utils"
 )
 
 // 类型定义
@@ -31,20 +30,6 @@ var enhancedResourceManager *core.ResourceManager
 var startTime = time.Now()
 
 // 辅助函数
-func newID() string {
-	return utils.NewID()
-}
-
-func writeJSON(w http.ResponseWriter, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
-}
-
-func writeJSONWithStatus(w http.ResponseWriter, statusCode int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(data)
-}
 
 // 初始化处理器
 func InitProcessor(resourceManager *core.ResourceManager) {
@@ -112,7 +97,7 @@ func ProcessParallelHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.JobID == "" {
-		req.JobID = newID()
+		req.JobID = core.NewID()
 	}
 
 	if req.Priority == 0 {
@@ -190,7 +175,7 @@ func ProcessBatchHandler(w http.ResponseWriter, r *http.Request) {
 		"message":      "Batch processing started",
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // pipelineStatusHandler 获取流水线状态
@@ -213,7 +198,7 @@ func pipelineStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := globalProcessor.GetPipelineStatus(pipelineID)
-	writeJSONWithStatus(w, http.StatusOK, status)
+	core.WriteJSON(w, http.StatusOK, status)
 }
 
 // enhancedResourceHandler 获取增强资源状态
@@ -230,7 +215,7 @@ func enhancedResourceHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := enhancedResourceManager.GetResourceStatus()
-	writeJSONWithStatus(w, http.StatusOK, status)
+	core.WriteJSON(w, http.StatusOK, status)
 }
 
 // processorStatusHandler 获取处理器状态
@@ -247,7 +232,7 @@ func processorStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := globalProcessor.GetProcessorStatus()
-	writeJSONWithStatus(w, http.StatusOK, status)
+	core.WriteJSON(w, http.StatusOK, status)
 }
 
 // vectorRebuildHandler 重建向量索引
@@ -291,7 +276,7 @@ func vectorRebuildHandler(w http.ResponseWriter, r *http.Request) {
 		"message": "Vector index rebuild started",
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // vectorStatusHandler 获取向量存储状态
@@ -308,7 +293,7 @@ func vectorStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := enhancedVectorStore.GetStatus()
-	writeJSONWithStatus(w, http.StatusOK, status)
+	core.WriteJSON(w, http.StatusOK, status)
 }
 
 // submitJobHandler 提交作业到增强资源管理器
@@ -345,7 +330,7 @@ func submitJobHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 分配资源
-	jobID := newID()
+	jobID := core.NewID()
 	_, err := enhancedResourceManager.AllocateResources(jobID, req.JobType, strconv.Itoa(req.Priority))
 	if err != nil {
 		log.Printf("Failed to allocate resources: %v", err)
@@ -360,7 +345,7 @@ func submitJobHandler(w http.ResponseWriter, r *http.Request) {
 		"message":  "Job submitted successfully",
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // hybridSearchHandler 混合搜索
@@ -429,7 +414,7 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 			"duration_ms": 0,
 			"timestamp":   time.Now(),
 		}
-		writeJSONWithStatus(w, http.StatusOK, response)
+		core.WriteJSON(w, http.StatusOK, response)
 		return
 	}
 
@@ -512,7 +497,7 @@ func hybridSearchHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp":   time.Now(),
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // batchUpsertHandler 批量插入向量
@@ -562,7 +547,7 @@ func batchUpsertHandler(w http.ResponseWriter, r *http.Request) {
 		"message":     "Batch upsert completed successfully",
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // cleanupHandler 清理资源
@@ -620,7 +605,7 @@ func cleanupHandler(w http.ResponseWriter, r *http.Request) {
 		"message":      "Cleanup completed successfully",
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // metricsHandler 获取详细指标
@@ -651,7 +636,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	metrics["timestamp"] = time.Now()
 	metrics["uptime"] = time.Since(startTime)
 
-	writeJSONWithStatus(w, http.StatusOK, metrics)
+	core.WriteJSON(w, http.StatusOK, metrics)
 }
 
 // configHandler 获取和更新配置
@@ -672,7 +657,7 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 			response["vector_store"] = enhancedVectorStore.GetStatus()
 		}
 
-		writeJSONWithStatus(w, http.StatusOK, response)
+		core.WriteJSON(w, http.StatusOK, response)
 
 	case http.MethodPost:
 		// 更新配置
@@ -690,7 +675,7 @@ func configHandler(w http.ResponseWriter, r *http.Request) {
 			"message": "Configuration updated (restart may be required)",
 		}
 
-		writeJSONWithStatus(w, http.StatusOK, response)
+		core.WriteJSON(w, http.StatusOK, response)
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -803,7 +788,7 @@ func searchStrategiesHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp":  time.Now(),
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // indexStatusHandler 获取索引状态
@@ -836,7 +821,7 @@ func indexStatusHandler(w http.ResponseWriter, r *http.Request) {
 		"enhanced_status": enhancedStatus,
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // indexRebuildHandler 重建索引
@@ -895,7 +880,7 @@ func indexRebuildHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp":   time.Now(),
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // indexOptimizeHandler 优化索引
@@ -957,7 +942,7 @@ func indexOptimizeHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp":   time.Now(),
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // searchHandler 处理搜索请求
@@ -1079,7 +1064,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		strategyUsed = "traditional"
 	}
-	
+
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Search failed: %v", err), http.StatusInternalServerError)
 		return
@@ -1096,7 +1081,7 @@ func searchHandler(w http.ResponseWriter, r *http.Request) {
 		"timestamp":   time.Now(),
 	}
 
-	writeJSONWithStatus(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // batchConfigHandler 处理批量配置请求
@@ -1109,7 +1094,7 @@ func batchConfigHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// config := globalStore.batchConfig
-		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"config":  nil, // config,
 		})
@@ -1143,7 +1128,7 @@ func batchConfigHandler(w http.ResponseWriter, r *http.Request) {
 		// }
 
 		// globalStore.UpdateBatchConfig(config)
-		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"message": "Batch configuration updated successfully",
 			"config":  batchConfig,
@@ -1165,7 +1150,7 @@ func batchMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// metrics := globalStore.GetBatchMetrics()
-		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"metrics": nil, // metrics,
 		})
@@ -1178,7 +1163,7 @@ func batchMetricsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// globalStore.ResetBatchMetrics()
-		writeJSONWithStatus(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"success": true,
 			"message": "Batch metrics reset successfully",
 		})

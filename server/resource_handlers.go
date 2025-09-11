@@ -43,13 +43,13 @@ func (h *ResourceHandlers) ResourceHandler(w http.ResponseWriter, r *http.Reques
 		"status":    "active",
 	}
 
-	writeJSON(w, http.StatusOK, resources)
+	core.WriteJSON(w, http.StatusOK, resources)
 }
 
 // EnhancedResourceHandler 增强资源管理处理器
 func (h *ResourceHandlers) EnhancedResourceHandler(w http.ResponseWriter, r *http.Request) {
 	if h.resourceManager == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Enhanced resource manager not available",
 			"status":  "unavailable",
 			"message": "Enhanced resource manager is not initialized",
@@ -74,13 +74,13 @@ func (h *ResourceHandlers) EnhancedResourceHandler(w http.ResponseWriter, r *htt
 	// 这里可以添加从resourceManager获取实际状态的代码
 	// 例如: enhancedResources["active_allocations"] = h.resourceManager.GetActiveAllocations()
 
-	writeJSON(w, http.StatusOK, enhancedResources)
+	core.WriteJSON(w, http.StatusOK, enhancedResources)
 }
 
 // ProcessorStatusHandler 处理器状态处理器
 func (h *ResourceHandlers) ProcessorStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if h.processor == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Parallel processor not available",
 			"status":  "unavailable",
 			"message": "Parallel processor is not initialized",
@@ -107,13 +107,13 @@ func (h *ResourceHandlers) ProcessorStatusHandler(w http.ResponseWriter, r *http
 	// 这里可以添加从processor获取实际状态的代码
 	// 例如: processorStatus["active_jobs"] = h.processor.GetActiveJobCount()
 
-	writeJSON(w, http.StatusOK, processorStatus)
+	core.WriteJSON(w, http.StatusOK, processorStatus)
 }
 
 // GPUStatusHandler GPU状态处理器
 func (h *ResourceHandlers) GPUStatusHandler(w http.ResponseWriter, r *http.Request) {
 	if h.resourceManager == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		core.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":   "Resource manager not available",
 			"status":  "unavailable",
 			"message": "Unified resource manager is not initialized",
@@ -124,7 +124,7 @@ func (h *ResourceHandlers) GPUStatusHandler(w http.ResponseWriter, r *http.Reque
 	// 检查GPU是否可用
 	gpuAvailable := h.resourceManager.IsGPUAvailable()
 	if !gpuAvailable {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		core.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"gpu_available": false,
 			"status":        "unavailable",
 			"message":       "GPU resources are not available on this system",
@@ -145,5 +145,5 @@ func (h *ResourceHandlers) GPUStatusHandler(w http.ResponseWriter, r *http.Reque
 		"timestamp":     time.Now().Unix(),
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"videoSummarize/core"
 )
 
 // IntegrityHandlers 文件完整性相关的HTTP处理器
@@ -31,7 +32,7 @@ func (h *IntegrityHandlers) IntegrityHandler(w http.ResponseWriter, r *http.Requ
 	case http.MethodPost:
 		h.verifySpecificFiles(w, r)
 	default:
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
 			"error":   "Method not allowed",
 			"message": "Only GET and POST methods are supported",
 		})
@@ -41,21 +42,21 @@ func (h *IntegrityHandlers) IntegrityHandler(w http.ResponseWriter, r *http.Requ
 // checkIntegrity 检查所有文件完整性
 func (h *IntegrityHandlers) checkIntegrity(w http.ResponseWriter, r *http.Request) {
 	results := map[string]interface{}{
-		"scan_started": time.Now().Unix(),
-		"data_root":    h.dataRoot,
-		"files_checked": 0,
+		"scan_started":    time.Now().Unix(),
+		"data_root":       h.dataRoot,
+		"files_checked":   0,
 		"files_corrupted": 0,
-		"files_missing": 0,
+		"files_missing":   0,
 		"corrupted_files": []string{},
 		"missing_files":   []string{},
-		"status":        "completed",
+		"status":          "completed",
 	}
 
 	// 检查数据目录是否存在
 	if _, err := os.Stat(h.dataRoot); os.IsNotExist(err) {
 		results["status"] = "error"
 		results["error"] = "Data root directory does not exist"
-		writeJSON(w, http.StatusOK, results)
+		core.WriteJSON(w, http.StatusOK, results)
 		return
 	}
 
@@ -93,7 +94,7 @@ func (h *IntegrityHandlers) checkIntegrity(w http.ResponseWriter, r *http.Reques
 	results["missing_files"] = missingFiles
 	results["scan_completed"] = time.Now().Unix()
 
-	writeJSON(w, http.StatusOK, results)
+	core.WriteJSON(w, http.StatusOK, results)
 }
 
 // verifySpecificFiles 验证特定文件
@@ -103,7 +104,7 @@ func (h *IntegrityHandlers) verifySpecificFiles(w http.ResponseWriter, r *http.R
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		core.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":   "Invalid request body",
 			"message": err.Error(),
 		})
@@ -125,13 +126,13 @@ func (h *IntegrityHandlers) verifySpecificFiles(w http.ResponseWriter, r *http.R
 	results["results"] = fileResults
 	results["verification_completed"] = time.Now().Unix()
 
-	writeJSON(w, http.StatusOK, results)
+	core.WriteJSON(w, http.StatusOK, results)
 }
 
 // RepairHandler 文件修复处理器
 func (h *IntegrityHandlers) RepairHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]interface{}{
 			"error":   "Method not allowed",
 			"message": "Only POST method is supported",
 		})
@@ -139,13 +140,13 @@ func (h *IntegrityHandlers) RepairHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	var repairRequest struct {
-		Files      []string `json:"files"`
-		RepairType string   `json:"repair_type"` // "auto", "manual", "recreate"
+		Files      []string               `json:"files"`
+		RepairType string                 `json:"repair_type"` // "auto", "manual", "recreate"
 		Options    map[string]interface{} `json:"options"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&repairRequest); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+		core.WriteJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error":   "Invalid request body",
 			"message": err.Error(),
 		})
@@ -161,15 +162,15 @@ func (h *IntegrityHandlers) RepairHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	response := map[string]interface{}{
-		"repair_id":        repairID,
-		"repair_started":   time.Now().Unix(),
+		"repair_id":       repairID,
+		"repair_started":  time.Now().Unix(),
 		"files_processed": len(repairRequest.Files),
-		"repair_type":      repairRequest.RepairType,
-		"results":          repairResults,
-		"status":           "completed",
+		"repair_type":     repairRequest.RepairType,
+		"results":         repairResults,
+		"status":          "completed",
 	}
 
-	writeJSON(w, http.StatusOK, response)
+	core.WriteJSON(w, http.StatusOK, response)
 }
 
 // isFileCorrupted 检查文件是否损坏
@@ -237,11 +238,11 @@ func (h *IntegrityHandlers) verifyFile(filePath string) map[string]interface{} {
 // repairFile 修复单个文件
 func (h *IntegrityHandlers) repairFile(filePath, repairType string) map[string]interface{} {
 	result := map[string]interface{}{
-		"file_path":   filePath,
-		"repair_type": repairType,
-		"status":      "unknown",
+		"file_path":    filePath,
+		"repair_type":  repairType,
+		"status":       "unknown",
 		"action_taken": "",
-		"error":       nil,
+		"error":        nil,
 	}
 
 	switch repairType {
