@@ -48,23 +48,19 @@ processors 模块是视频处理的核心模块，负责视频处理的完整流
 
 #### ASR实现
 
-**MockASR**
-- 模拟ASR实现，用于测试
-- `Transcribe()`: 返回模拟的转录结果
-
-**WhisperASR**
-- 基于OpenAI Whisper的ASR实现
-- `Transcribe()`: 使用Whisper API进行转录
-
-**VolcengineASR**
-- 基于火山引擎的ASR实现
-- `Transcribe()`: 使用火山引擎API进行转录
-
-**LocalWhisperASR**
-- 本地Whisper模型实现（默认推荐）
-- `Transcribe()`: 使用本地Whisper模型进行转录
+**LocalWhisperASR**（当前唯一实现）
+- 本地Whisper模型实现，使用独立Python脚本
+- `Transcribe()`: 调用scripts/whisper_transcribe.py进行转录
 - 支持GPU加速，处理速度提升2-3倍
 - 支持中文语音识别，准确率95%+
+- 脚本路径: `scripts/whisper_transcribe.py`
+- 输出格式: JSON格式的转录片段
+- 依赖: Python环境 + openai-whisper包
+
+**已移除的实现**
+- MockASR: 已移除，不再支持
+- WhisperASR: 已移除，不再支持
+- VolcengineASR: 已移除，不再支持
 
 #### 主要结构体
 
@@ -433,8 +429,10 @@ if err != nil {
 
 模块支持通过环境变量和配置文件进行配置：
 
-- `ASR_PROVIDER`: ASR提供商选择
-- `ASR_MAX_RETRIES`: 最大重试次数
-- `ASR_TIMEOUT`: 超时时间
-- `ASR_GPU_ENABLED`: GPU加速开关
+- `ASR_PROVIDER`: ASR提供商选择（当前固定为local_whisper）
+- `ASR_MAX_RETRIES`: 最大重试次数（默认2）
+- `ASR_TIMEOUT`: 超时时间（默认300秒）
+- `ASR_GPU_ENABLED`: GPU加速开关（默认true）
 - `API_KEY`: LLM/Embedding 等API密钥
+- `PYTHONIOENCODING`: Python编码设置（建议utf-8）
+- `PYTHONUTF8`: Python UTF-8模式（建议1）

@@ -77,12 +77,14 @@
   4. 时间戳生成
 
 #### processors/asr.go
-- **功能**: 自动语音识别模块
+- **功能**: 自动语音识别模块（已重构简化）
 - **ASR提供者**:
-  - `MockASR`: 模拟ASR（用于测试）
-  - `WhisperASR`: OpenAI Whisper API
-  - `VolcengineASR`: 火山引擎ASR
-  - `LocalWhisperASR`: 本地Whisper模型（支持GPU加速）
+  - `LocalWhisperASR`: 本地Whisper模型（唯一实现，支持GPU加速）
+- **已移除的提供者**:
+  - `MockASR`: 已删除
+  - `WhisperASR`: 已删除
+  - `VolcengineASR`: 已删除
+- **Python脚本**: `scripts/whisper_transcribe.py`（独立转录脚本）
 - **GPU加速实现**:
   - 本地Whisper使用PyTorch CUDA加速
   - 自动检测GPU可用性

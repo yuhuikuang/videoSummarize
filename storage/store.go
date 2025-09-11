@@ -91,7 +91,8 @@ func formatTime(seconds float64) string {
 }
 
 func (s *MemoryVectorStore) Upsert(jobID string, items []core.Item) int {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	embeds := make([]Document, 0, len(items))
 	for _, it := range items {
 		vec := embedText(strings.ToLower(it.Text + " " + it.Summary))
@@ -102,17 +103,23 @@ func (s *MemoryVectorStore) Upsert(jobID string, items []core.Item) int {
 }
 
 func (s *MemoryVectorStore) Search(jobID string, query string, topK int) []core.Hit {
-	s.mu.RLock(); defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	docs := s.docs[jobID]
 	qv := embedText(strings.ToLower(query))
-	type scored struct{ i int; score float64 }
+	type scored struct {
+		i     int
+		score float64
+	}
 	scores := make([]scored, 0, len(docs))
 	for i, d := range docs {
 		s := cosine(qv, d.Embed)
 		scores = append(scores, scored{i, s})
 	}
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
-	if topK <= 0 || topK > len(scores) { topK = min(len(scores), 5) }
+	if topK <= 0 || topK > len(scores) {
+		topK = min(len(scores), 5)
+	}
 	hits := make([]core.Hit, 0, topK)
 	for _, sc := range scores[:topK] {
 		d := docs[sc.i]
@@ -124,17 +131,17 @@ func (s *MemoryVectorStore) Search(jobID string, query string, topK int) []core.
 // ---------------- Milvus implementation ----------------
 
 type MilvusVectorStore struct {
-	mc       client.Client
-	coll     string
-	dim      int
-	oa       *openai.Client
+	mc   client.Client
+	coll string
+	dim  int
+	oa   *openai.Client
 }
 
 // ---------------- PgVector implementation ----------------
 
 type PgVectorStore struct {
-	conn *pgx.Conn
-	oa   *openai.Client
+	conn    *pgx.Conn
+	oa      *openai.Client
 	videoID string // 当前视频ID，用于隔离不同视频的数据
 }
 
@@ -145,6 +152,15 @@ func InitVectorStore() error {
 		GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
 		return nil
 	}
+
+	// 优先尝试使用增强版向量存储
+	enhancedStore, err := NewEnhancedVectorStore()
+	if err == nil {
+		GlobalStore = enhancedStore
+		fmt.Println("Successfully initialized Enhanced Vector Store")
+		return nil
+	}
+	fmt.Printf("Warning: Failed to initialize Enhanced Vector Store (%v), falling back to standard stores\n", err)
 
 	storeKind := strings.ToLower(strings.TrimSpace(os.Getenv("STORE")))
 	if storeKind == "milvus" {
@@ -186,17 +202,23 @@ func InitVectorStore() error {
 
 func newMilvusVectorStore() (*MilvusVectorStore, error) {
 	addr := os.Getenv("MILVUS_ADDR")
-	if addr == "" { addr = "localhost:19530" }
+	if addr == "" {
+		addr = "localhost:19530"
+	}
 	username := os.Getenv("MILVUS_USERNAME")
 	password := os.Getenv("MILVUS_PASSWORD")
 	apiKey := os.Getenv("MILVUS_API_KEY") // For Zilliz Cloud
 	coll := os.Getenv("MILVUS_COLLECTION")
-	if coll == "" { coll = "video_segments" }
+	if coll == "" {
+		coll = "video_segments"
+	}
 
-	mc, err := client.NewClient(context.Background(), client.Config{ Address: addr, Username: username, Password: password, APIKey: apiKey })
-	if err != nil { return nil, fmt.Errorf("connect milvus: %w", err) }
+	mc, err := client.NewClient(context.Background(), client.Config{Address: addr, Username: username, Password: password, APIKey: apiKey})
+	if err != nil {
+		return nil, fmt.Errorf("connect milvus: %w", err)
+	}
 
-	s := &MilvusVectorStore{ mc: mc, coll: coll, dim: 1536 }
+	s := &MilvusVectorStore{mc: mc, coll: coll, dim: 1536}
 
 	if err := s.ensureSchemaAndIndex(); err != nil {
 		return nil, err
@@ -207,7 +229,9 @@ func newMilvusVectorStore() (*MilvusVectorStore, error) {
 func (s *MilvusVectorStore) ensureSchemaAndIndex() error {
 	ctx := context.Background()
 	has, err := s.mc.HasCollection(ctx, s.coll)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if !has {
 		schema := entity.NewSchema()
 		// id (auto int64 primary)
@@ -228,12 +252,16 @@ func (s *MilvusVectorStore) ensureSchemaAndIndex() error {
 	}
 	// create index (id autoindex and vector hnsw cosine)
 	idx, err := entity.NewIndexHNSW(entity.COSINE, 8, 200)
-	if err != nil { return fmt.Errorf("new hnsw index: %w", err) }
+	if err != nil {
+		return fmt.Errorf("new hnsw index: %w", err)
+	}
 	if err := s.mc.CreateIndex(ctx, s.coll, "vector", idx, false, client.WithIndexName("idx_vector")); err != nil {
 		return fmt.Errorf("create index: %w", err)
 	}
 	// load collection
-	if err := s.mc.LoadCollection(ctx, s.coll, false); err != nil { return fmt.Errorf("load collection: %w", err) }
+	if err := s.mc.LoadCollection(ctx, s.coll, false); err != nil {
+		return fmt.Errorf("load collection: %w", err)
+	}
 	return nil
 }
 
@@ -255,21 +283,29 @@ func (s *MilvusVectorStore) embed(text string) ([]float32, error) {
 	}
 
 	cli, err := s.openaiClient()
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	req := openai.EmbeddingRequest{
 		Model: openai.EmbeddingModel(cfg.EmbeddingModel),
 		Input: []string{text},
 	}
 	resp, err := cli.CreateEmbeddings(ctx, req)
-	if err != nil { return nil, fmt.Errorf("embedding API failed: %v", err) }
-	if len(resp.Data) == 0 { return nil, fmt.Errorf("no embeddings returned") }
+	if err != nil {
+		return nil, fmt.Errorf("embedding API failed: %v", err)
+	}
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("no embeddings returned")
+	}
 	// go-openai returns []float32
 	return resp.Data[0].Embedding, nil
 }
 
 func (s *MilvusVectorStore) Upsert(jobID string, items []core.Item) int {
-	if len(items) == 0 { return 0 }
+	if len(items) == 0 {
+		return 0
+	}
 	// prepare columns
 	jobIDs := make([]string, 0, len(items))
 	starts := make([]float64, 0, len(items))
@@ -287,10 +323,14 @@ func (s *MilvusVectorStore) Upsert(jobID string, items []core.Item) int {
 		summaries = append(summaries, it.Summary)
 		frames = append(frames, it.FramePath)
 		v, err := s.embed(strings.ToLower(it.Text + " " + it.Summary))
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		vectors = append(vectors, v)
 	}
-	if len(vectors) == 0 { return 0 }
+	if len(vectors) == 0 {
+		return 0
+	}
 
 	ctx := context.Background()
 	_, err := s.mc.Insert(ctx, s.coll, "",
@@ -302,32 +342,67 @@ func (s *MilvusVectorStore) Upsert(jobID string, items []core.Item) int {
 		entity.NewColumnVarChar("frame_path", frames),
 		entity.NewColumnFloatVector("vector", s.dim, vectors),
 	)
-	if err != nil { return 0 }
+	if err != nil {
+		return 0
+	}
 	return len(vectors)
 }
 
 func (s *MilvusVectorStore) Search(jobID string, query string, topK int) []core.Hit {
 	v, err := s.embed(strings.ToLower(query))
-	if err != nil { return nil }
-	if topK <= 0 { topK = 5 }
+	if err != nil {
+		return nil
+	}
+	if topK <= 0 {
+		topK = 5
+	}
 	ctx := context.Background()
 	sp, _ := entity.NewIndexHNSWSearchParam(74)
 	filter := fmt.Sprintf("job_id == \"%s\"", strings.ReplaceAll(jobID, "\"", "\\\""))
-	res, err := s.mc.Search(ctx, s.coll, []string{}, filter, []string{"start","end","text","summary","frame_path"}, []entity.Vector{entity.FloatVector(v)}, "vector", entity.COSINE, topK, sp)
-	if err != nil { return nil }
+	res, err := s.mc.Search(ctx, s.coll, []string{}, filter, []string{"start", "end", "text", "summary", "frame_path"}, []entity.Vector{entity.FloatVector(v)}, "vector", entity.COSINE, topK, sp)
+	if err != nil {
+		return nil
+	}
 	var hits []core.Hit
 	for _, r := range res {
 		// build a map of field name -> column
 		cols := map[string]entity.Column{}
-		for _, c := range r.Fields { cols[c.Name()] = c }
+		for _, c := range r.Fields {
+			cols[c.Name()] = c
+		}
 		for i := 0; i < r.ResultCount; i++ {
 			var start, end float64
 			var text, summary, frame string
-			if c, ok := cols["start"].(*entity.ColumnDouble); ok { data := c.Data(); if i < len(data) { start = data[i] } }
-			if c, ok := cols["end"].(*entity.ColumnDouble); ok { data := c.Data(); if i < len(data) { end = data[i] } }
-			if c, ok := cols["text"].(*entity.ColumnVarChar); ok { data := c.Data(); if i < len(data) { text = data[i] } }
-			if c, ok := cols["summary"].(*entity.ColumnVarChar); ok { data := c.Data(); if i < len(data) { summary = data[i] } }
-			if c, ok := cols["frame_path"].(*entity.ColumnVarChar); ok { data := c.Data(); if i < len(data) { frame = data[i] } }
+			if c, ok := cols["start"].(*entity.ColumnDouble); ok {
+				data := c.Data()
+				if i < len(data) {
+					start = data[i]
+				}
+			}
+			if c, ok := cols["end"].(*entity.ColumnDouble); ok {
+				data := c.Data()
+				if i < len(data) {
+					end = data[i]
+				}
+			}
+			if c, ok := cols["text"].(*entity.ColumnVarChar); ok {
+				data := c.Data()
+				if i < len(data) {
+					text = data[i]
+				}
+			}
+			if c, ok := cols["summary"].(*entity.ColumnVarChar); ok {
+				data := c.Data()
+				if i < len(data) {
+					summary = data[i]
+				}
+			}
+			if c, ok := cols["frame_path"].(*entity.ColumnVarChar); ok {
+				data := c.Data()
+				if i < len(data) {
+					frame = data[i]
+				}
+			}
 			score := float64(r.Scores[i])
 			hits = append(hits, core.Hit{Score: score, Start: start, End: end, Text: text, Summary: summary, FramePath: frame})
 		}
@@ -339,15 +414,25 @@ func newPgVectorStore() (*PgVectorStore, error) {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
 		host := os.Getenv("POSTGRES_HOST")
-		if host == "" { host = "localhost" }
+		if host == "" {
+			host = "localhost"
+		}
 		port := os.Getenv("POSTGRES_PORT")
-		if port == "" { port = "5432" }
+		if port == "" {
+			port = "5432"
+		}
 		user := os.Getenv("POSTGRES_USER")
-		if user == "" { user = "postgres" }
+		if user == "" {
+			user = "postgres"
+		}
 		password := os.Getenv("POSTGRES_PASSWORD")
-		if password == "" { password = "postgres" }
+		if password == "" {
+			password = "postgres"
+		}
 		dbname := os.Getenv("POSTGRES_DB")
-		if dbname == "" { dbname = "videosummarize" }
+		if dbname == "" {
+			dbname = "videosummarize"
+		}
 		dbURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s", user, password, host, port, dbname)
 	}
 
@@ -396,26 +481,26 @@ func (s *PgVectorStore) GetVideoID() string {
 // CleanupVideo 清理指定视频的所有数据
 func (s *PgVectorStore) CleanupVideo(videoID string) (int, error) {
 	ctx := context.Background()
-	
+
 	// Count segments before deletion
 	var count int
 	err := s.conn.QueryRow(ctx, "SELECT COUNT(*) FROM video_segments WHERE video_id = $1", videoID).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to count segments: %w", err)
 	}
-	
+
 	// Delete segments
 	_, err = s.conn.Exec(ctx, "DELETE FROM video_segments WHERE video_id = $1", videoID)
 	if err != nil {
 		return 0, fmt.Errorf("failed to delete segments: %w", err)
 	}
-	
+
 	// Delete video metadata
 	_, err = s.conn.Exec(ctx, "DELETE FROM videos WHERE video_id = $1", videoID)
 	if err != nil {
 		return count, fmt.Errorf("failed to delete video metadata: %w", err)
 	}
-	
+
 	return count, nil
 }
 
@@ -479,14 +564,14 @@ func (s *PgVectorStore) ensureTable() error {
 
 	// Add foreign key constraint if not exists (暂时跳过外键约束)
 	// fkQuery := `
-	// 	DO $$ 
+	// 	DO $$
 	// 	BEGIN
 	// 		IF NOT EXISTS (
-	// 			SELECT 1 FROM information_schema.table_constraints 
+	// 			SELECT 1 FROM information_schema.table_constraints
 	// 			WHERE constraint_name = 'video_segments_video_id_fkey'
 	// 		) THEN
-	// 			ALTER TABLE video_segments 
-	// 			ADD CONSTRAINT video_segments_video_id_fkey 
+	// 			ALTER TABLE video_segments
+	// 			ADD CONSTRAINT video_segments_video_id_fkey
 	// 			FOREIGN KEY (video_id) REFERENCES videos(video_id) ON DELETE CASCADE;
 	// 		END IF;
 	// 	END $$;
@@ -648,15 +733,21 @@ func (s *PgVectorStore) embed(text string) ([]float32, error) {
 	}
 
 	cli, err := s.openaiClient()
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 	req := openai.EmbeddingRequest{
 		Model: openai.EmbeddingModel(cfg.EmbeddingModel),
 		Input: []string{text},
 	}
 	resp, err := cli.CreateEmbeddings(ctx, req)
-	if err != nil { return nil, fmt.Errorf("embedding API failed: %v", err) }
-	if len(resp.Data) == 0 { return nil, fmt.Errorf("no embeddings returned") }
+	if err != nil {
+		return nil, fmt.Errorf("embedding API failed: %v", err)
+	}
+	if len(resp.Data) == 0 {
+		return nil, fmt.Errorf("no embeddings returned")
+	}
 	return resp.Data[0].Embedding, nil
 }
 
@@ -699,7 +790,9 @@ func (s *PgVectorStore) ScheduleIndexMaintenance() {
 }
 
 func (s *PgVectorStore) Upsert(jobID string, items []core.Item) int {
-	if len(items) == 0 { return 0 }
+	if len(items) == 0 {
+		return 0
+	}
 	if s.videoID == "" {
 		fmt.Printf("Warning: video_id not set for PgVectorStore, using jobID as video_id\n")
 		s.videoID = jobID
@@ -750,7 +843,9 @@ func (s *PgVectorStore) Upsert(jobID string, items []core.Item) int {
 }
 
 func (s *PgVectorStore) Search(jobID string, query string, topK int) []core.Hit {
-	if topK <= 0 { topK = 5 }
+	if topK <= 0 {
+		topK = 5
+	}
 	if s.videoID == "" {
 		fmt.Printf("Warning: video_id not set for PgVectorStore, using jobID as video_id\n")
 		s.videoID = jobID
@@ -758,7 +853,9 @@ func (s *PgVectorStore) Search(jobID string, query string, topK int) []core.Hit 
 
 	// Generate query embedding
 	queryEmbedding, err := s.embed(strings.ToLower(query))
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 
 	vec := pgvector.NewVector(queryEmbedding)
 	ctx := context.Background()
@@ -772,7 +869,9 @@ func (s *PgVectorStore) Search(jobID string, query string, topK int) []core.Hit 
 		ORDER BY embedding <=> $1 
 		LIMIT $4
 	`, vec, s.videoID, jobID, topK)
-	if err != nil { return nil }
+	if err != nil {
+		return nil
+	}
 	defer rows.Close()
 
 	var hits []core.Hit
@@ -780,14 +879,16 @@ func (s *PgVectorStore) Search(jobID string, query string, topK int) []core.Hit 
 		var start, end, similarity float64
 		var text, summary string
 		err := rows.Scan(&start, &end, &text, &summary, &similarity)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 
 		hits = append(hits, core.Hit{
-			Score: similarity,
-			Start: start,
-			End: end,
-			Text: text,
-			Summary: summary,
+			Score:     similarity,
+			Start:     start,
+			End:       end,
+			Text:      text,
+			Summary:   summary,
 			FramePath: "", // Not stored in this implementation
 		})
 	}
@@ -803,15 +904,30 @@ func StoreHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func storeHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost { core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"}); return }
+	if r.Method != http.MethodPost {
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
 	var req StoreRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"}); return }
-	if req.JobID == "" { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id required"}); return }
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.JobID == "" {
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id required"})
+		return
+	}
 	items := req.Items
 	if len(items) == 0 {
 		b, err := os.ReadFile(filepath.Join(core.DataRoot(), req.JobID, "items.json"))
-		if err != nil { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "items missing and items.json not found"}); return }
-	if err := json.Unmarshal(b, &items); err != nil { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid items.json"}); return }
+		if err != nil {
+			core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "items missing and items.json not found"})
+			return
+		}
+		if err := json.Unmarshal(b, &items); err != nil {
+			core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid items.json"})
+			return
+		}
 	}
 	cnt := GlobalStore.Upsert(req.JobID, items)
 	core.WriteJSON(w, http.StatusOK, StoreResponse{JobID: req.JobID, Count: cnt})
@@ -823,11 +939,20 @@ func QueryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func queryHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost { core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"}); return }
+	if r.Method != http.MethodPost {
+		core.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
 	var req QueryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"}); return }
-	if req.JobID == "" || strings.TrimSpace(req.Query) == "" { core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id and query required"}); return }
-	
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
+		return
+	}
+	if req.JobID == "" || strings.TrimSpace(req.Query) == "" {
+		core.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "job_id and query required"})
+		return
+	}
+
 	// For pgvector, ensure video_id is set for proper isolation
 	if pgStore, ok := GlobalStore.(*PgVectorStore); ok {
 		if pgStore.GetVideoID() == "" {
@@ -836,7 +961,7 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("Warning: video_id not set for query, using job_id as fallback: %s\n", req.JobID)
 		}
 	}
-	
+
 	hits := GlobalStore.Search(req.JobID, req.Query, req.TopK)
 	ans := synthesizeAnswer(req.Query, hits)
 	core.WriteJSON(w, http.StatusOK, QueryResponse{JobID: req.JobID, Query: req.Query, Answer: ans, Hits: hits})
@@ -863,23 +988,35 @@ func embedText(text string) map[string]float64 {
 			return m
 		}
 	}
-	
+
 	// 回退到简单的词频向量化
 	toks := tokenize(text)
 	m := map[string]float64{}
-	for _, t := range toks { m[t] += 1 }
+	for _, t := range toks {
+		m[t] += 1
+	}
 	// L2 normalize
 	var sum float64
-	for _, v := range m { sum += v * v }
-	if sum == 0 { return m }
+	for _, v := range m {
+		sum += v * v
+	}
+	if sum == 0 {
+		return m
+	}
 	norm := math.Sqrt(sum)
-	for k, v := range m { m[k] = v / norm }
+	for k, v := range m {
+		m[k] = v / norm
+	}
 	return m
 }
 
 func cosine(a, b map[string]float64) float64 {
 	var dot float64
-	for k, va := range a { if vb, ok := b[k]; ok { dot += va * vb } }
+	for k, va := range a {
+		if vb, ok := b[k]; ok {
+			dot += va * vb
+		}
+	}
 	return dot
 }
 
@@ -902,14 +1039,16 @@ func storeItems(items []core.Item, jobID string) (int, error) {
 	if GlobalStore == nil {
 		return 0, fmt.Errorf("vector store not initialized")
 	}
-	
+
 	count := GlobalStore.Upsert(jobID, items)
 	return count, nil
 }
 
 func synthesizeAnswer(question string, hits []core.Hit) string {
-	if len(hits) == 0 { return "未找到相关片段。" }
-	
+	if len(hits) == 0 {
+		return "未找到相关片段。"
+	}
+
 	// 使用RAG增强检索生成更准确的答案
 	return synthesizeAnswerWithRAG(question, hits)
 }
@@ -921,7 +1060,7 @@ func synthesizeAnswerWithRAG(question string, hits []core.Hit) string {
 		// 降级到简单拼接
 		return synthesizeAnswerSimple(question, hits)
 	}
-	
+
 	// 构建上下文信息
 	contextParts := make([]string, 0, len(hits))
 	for i, hit := range hits {
@@ -930,7 +1069,7 @@ func synthesizeAnswerWithRAG(question string, hits []core.Hit) string {
 		contextParts = append(contextParts, contextPart)
 	}
 	contextStr := strings.Join(contextParts, "\n\n")
-	
+
 	// 构建RAG提示词
 	prompt := fmt.Sprintf(`你是一个视频内容分析助手。基于以下检索到的视频片段信息，请回答用户的问题。
 
@@ -940,7 +1079,7 @@ func synthesizeAnswerWithRAG(question string, hits []core.Hit) string {
 用户问题：%s
 
 请基于上述片段信息提供准确、详细的回答，并在回答中明确标注相关的时间点。如果片段信息不足以完全回答问题，请说明哪些方面需要更多信息。`, contextStr, question)
-	
+
 	// 调用LLM生成答案
 	cli := openaiClient()
 	ctx := context.Background()
@@ -955,18 +1094,18 @@ func synthesizeAnswerWithRAG(question string, hits []core.Hit) string {
 		MaxTokens:   1000,
 		Temperature: 0.3, // 较低的温度以获得更准确的回答
 	}
-	
+
 	resp, err := cli.CreateChatCompletion(ctx, req)
 	if err != nil {
 		// LLM调用失败，降级到简单拼接
 		fmt.Printf("Warning: LLM call failed (%v), falling back to simple synthesis\n", err)
 		return synthesizeAnswerSimple(question, hits)
 	}
-	
+
 	if len(resp.Choices) == 0 {
 		return synthesizeAnswerSimple(question, hits)
 	}
-	
+
 	return strings.TrimSpace(resp.Choices[0].Message.Content)
 }
 

@@ -9,8 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"time"
 
 	"videoSummarize/core"
@@ -36,98 +34,12 @@ type TranscribeResponse struct {
 type LocalWhisperASR struct{}
 
 func (l LocalWhisperASR) Transcribe(audioPath string) ([]core.Segment, error) {
-	// 创建Python脚本来调用本地Whisper模型（支持GPU加速）
-	scriptContent := `#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-import whisper
-import sys
-import json
-import torch
-import os
-import io
+	// 使用 scripts 目录中的 Python 脚本调用本地 Whisper
+	scriptPath := filepath.Join("scripts", "whisper_transcribe.py")
 
-# 设置标准输出编码为UTF-8
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
-
-def transcribe_audio(audio_path):
-    try:
-        # 检测GPU可用性
-        device = "cpu"
-        if torch.cuda.is_available():
-            device = "cuda"
-            print(f"Using GPU: {torch.cuda.get_device_name(0)}", file=sys.stderr)
-        else:
-            print("GPU not available, using CPU", file=sys.stderr)
-        
-        # 从环境变量获取模型大小，默认使用base模型
-        model_size = os.getenv("WHISPER_MODEL", "base")
-        print(f"Loading Whisper model: {model_size}", file=sys.stderr)
-        
-        # 加载Whisper模型并指定设备
-        model = whisper.load_model(model_size, device=device)
-        
-        # 转录音频，启用GPU加速选项
-        transcribe_options = {
-            "language": "zh",  # 指定中文以提高准确性
-            "task": "transcribe",
-            "fp16": torch.cuda.is_available(),  # GPU时使用FP16加速
-            "verbose": False
-        }
-        
-        result = model.transcribe(audio_path, **transcribe_options)
-        
-        # 提取分段信息
-        segments = []
-        for segment in result.get("segments", []):
-            segments.append({
-                "start": segment["start"],
-                "end": segment["end"],
-                "text": segment["text"].strip()
-            })
-        
-        # 如果没有分段信息，使用整个文本
-        if not segments and result.get("text"):
-            segments = [{
-                "start": 0,
-                "end": result.get("duration", 0),
-                "text": result["text"].strip()
-            }]
-        
-        print(f"Transcription completed. Found {len(segments)} segments.", file=sys.stderr)
-        return segments
-        
-    except Exception as e:
-        print(f"Error: {str(e)}", file=sys.stderr)
-        return None
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python whisper_transcribe.py <audio_file>", file=sys.stderr)
-        sys.exit(1)
-    
-    audio_path = sys.argv[1]
-    segments = transcribe_audio(audio_path)
-    
-    if segments is None:
-        sys.exit(1)
-    
-    print(json.dumps(segments, ensure_ascii=False, indent=2))
-`
-
-	// 创建临时Python脚本文件
-	scriptPath := filepath.Join(os.TempDir(), "whisper_transcribe.py")
-	err := os.WriteFile(scriptPath, []byte(scriptContent), 0644)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create whisper script: %v", err)
-	}
-	defer os.Remove(scriptPath)
-
-	// 执行Python脚本
 	cmd := exec.Command("python", scriptPath, audioPath)
 	output, err := cmd.Output()
 	if err != nil {
-		// 如果本地Whisper失败，返回错误
 		return nil, fmt.Errorf("local Whisper transcription failed: %v", err)
 	}
 
@@ -137,30 +49,18 @@ if __name__ == "__main__":
 		End   float64 `json:"end"`
 		Text  string  `json:"text"`
 	}
-
-	err = json.Unmarshal(output, &segments)
-	if err != nil {
+	if err := json.Unmarshal(output, &segments); err != nil {
 		return nil, fmt.Errorf("failed to parse whisper output: %v", err)
 	}
 
 	// 转换为Segment格式
 	result := make([]core.Segment, len(segments))
 	for i, seg := range segments {
-		result[i] = core.Segment{
-			Start: seg.Start,
-			End:   seg.End,
-			Text:  seg.Text,
-		}
+		result[i] = core.Segment{Start: seg.Start, End: seg.End, Text: seg.Text}
 	}
-
 	return result, nil
 }
 
-func pickASRProvider() ASRProvider {
-	// 始终使用本地Whisper模型（无需API配置）
-	fmt.Println("Using Local Whisper ASR")
-	return LocalWhisperASR{}
-}
 
 // TranscribeHandler 导出的处理器函数
 func TranscribeHandler(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +98,7 @@ func transcribeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rm.UpdateJobStep(req.JobID, "transcription")
-	segs, err := transcribeAudio(audio, req.JobID)
+	segs, err := transcribeAudioEnhanced(audio, req.JobID)
 	if err != nil {
 		core.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -210,57 +110,8 @@ func transcribeHandler(w http.ResponseWriter, r *http.Request) {
 
 // transcribeAudio transcribes audio file and returns segments
 func TranscribeAudio(audioPath, jobID string) ([]core.Segment, error) {
-	return transcribeAudio(audioPath, jobID)
+	return transcribeAudioEnhanced(audioPath, jobID)
 }
-
-func transcribeAudio(audioPath, jobID string) ([]core.Segment, error) {
-	log.Printf("Starting transcription for job %s, audio: %s", jobID, audioPath)
-	prov := pickASRProvider()
-	segs, err := prov.Transcribe(audioPath)
-	if err != nil {
-		return nil, fmt.Errorf("transcribe audio: %v", err)
-	}
-	log.Printf("Transcription completed for job %s, got %d segments", jobID, len(segs))
-
-	// persist original transcript
-	jobDir := filepath.Join(core.DataRoot(), jobID)
-	transcriptPath := filepath.Join(jobDir, "transcript.json")
-	log.Printf("Saving transcript to: %s", transcriptPath)
-	err = os.WriteFile(transcriptPath, mustJSON(segs), 0644)
-	if err != nil {
-		log.Printf("Failed to save transcript: %v", err)
-		return nil, fmt.Errorf("failed to save transcript: %v", err)
-	}
-	log.Printf("Transcript saved successfully")
-
-	// 添加文本修正阶段
-	correctedSegs, correctionSession, err := CorrectTranscriptSegments(segs, jobID)
-	if err != nil {
-		log.Printf("Text correction failed for job %s: %v", jobID, err)
-		// 如果修正失败，使用原始转录结果
-		correctedSegs = segs
-	} else {
-		// 保存修正会话记录
-		if err := SaveCorrectionSession(jobDir, correctionSession); err != nil {
-			log.Printf("Failed to save correction session for job %s: %v", jobID, err)
-		}
-
-		// 保存修正后的转录文件
-		if err := SaveCorrectedTranscript(jobDir, correctedSegs); err != nil {
-			log.Printf("Failed to save corrected transcript for job %s: %v", jobID, err)
-			// 如果保存失败，使用原始转录结果
-			correctedSegs = segs
-		} else {
-			// 生成并记录修正报告
-			report := GenerateCorrectionReport(correctionSession)
-			log.Printf("Text correction report for job %s:\n%s", jobID, report)
-		}
-	}
-
-	return correctedSegs, nil
-}
-
-// Enhanced ASR functions with retry and error handling
 
 // ASRConfig ASR配置
 type ASRConfig struct {
@@ -276,13 +127,13 @@ type ASRConfig struct {
 // getASRConfig 获取ASR配置
 func getASRConfig() ASRConfig {
 	return ASRConfig{
-		Provider:   strings.ToLower(strings.TrimSpace(os.Getenv("ASR_PROVIDER"))),
-		MaxRetries: getEnvInt("ASR_MAX_RETRIES", 3),
-		RetryDelay: getEnvInt("ASR_RETRY_DELAY", 5),
-		Timeout:    getEnvInt("ASR_TIMEOUT", 300),
-		Language:   getEnvString("ASR_LANGUAGE", "zh"),
-		ModelSize:  getEnvString("WHISPER_MODEL", "base"),
-		GPUEnabled: getEnvBool("ASR_GPU_ENABLED", true),
+		Provider:   "local_whisper",
+		MaxRetries: 2,
+		RetryDelay: 5,
+		Timeout:    300,
+		Language:   "zh",
+		ModelSize:  "base",
+		GPUEnabled: true,
 	}
 }
 
@@ -309,8 +160,7 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]core.Segment, error) {
 
 		if err == nil {
 			// 成功
-			log.Printf("ASR transcription successful for job %s in %v, found %d segments",
-				jobID, duration, len(segs))
+			log.Printf("ASR transcription successful for job %s in %v, found %d segments",jobID, duration, len(segs))
 
 			// 保存原始转录结果
 			jobDir := filepath.Join(core.DataRoot(), jobID)
@@ -407,61 +257,8 @@ type transcribeResult struct {
 
 // pickASRProviderWithConfig 根据配置选择ASR提供者
 func pickASRProviderWithConfig(asrConfig ASRConfig) ASRProvider {
-	// 始终使用本地Whisper
-	log.Printf("Using Local Whisper ASR")
+	// 目前只实现了本地whisper
 	return LocalWhisperASR{}
-}
-
-// validateAudioFile 验证音频文件
-func validateAudioFile(audioPath string) error {
-	if _, err := os.Stat(audioPath); os.IsNotExist(err) {
-		return fmt.Errorf("audio file does not exist: %s", audioPath)
-	}
-
-	// 检查文件大小
-	info, err := os.Stat(audioPath)
-	if err != nil {
-		return fmt.Errorf("cannot stat audio file: %v", err)
-	}
-
-	if info.Size() == 0 {
-		return fmt.Errorf("audio file is empty: %s", audioPath)
-	}
-
-	// 检查文件格式（通过扩展名）
-	ext := strings.ToLower(filepath.Ext(audioPath))
-	allowedExts := []string{".wav", ".mp3", ".m4a", ".flac", ".ogg"}
-	for _, allowedExt := range allowedExts {
-		if ext == allowedExt {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("unsupported audio format: %s (supported: %v)", ext, allowedExts)
-}
-
-// Helper functions for environment variables
-func getEnvInt(key string, defaultValue int) int {
-	if value := os.Getenv(key); value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-	return defaultValue
-}
-
-func getEnvString(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	if value := os.Getenv(key); value != "" {
-		return strings.ToLower(value) == "true" || value == "1"
-	}
-	return defaultValue
 }
 
 // mustJSON 将对象转换为JSON字节数组
@@ -471,9 +268,4 @@ func mustJSON(v interface{}) []byte {
 		panic(err)
 	}
 	return data
-}
-
-// probeDuration 获取音频文件时长
-func probeDuration(audioPath string) (float64, error) {
-	return core.ProbeDuration(audioPath)
 }

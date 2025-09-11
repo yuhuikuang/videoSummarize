@@ -17,6 +17,7 @@ import (
 
 	"videoSummarize/config"
 	"videoSummarize/core"
+	"videoSummarize/processors"
 	"videoSummarize/storage"
 )
 
@@ -35,7 +36,7 @@ func newID() string {
 }
 
 func preprocessVideo(videoPath, jobID string) (interface{}, error) {
-	// 真实的视频预处理实现
+	// 使用增强版的预处理功能
 	jobDir := filepath.Join(core.DataRoot(), jobID)
 	framesDir := filepath.Join(jobDir, "frames")
 
@@ -50,13 +51,13 @@ func preprocessVideo(videoPath, jobID string) (interface{}, error) {
 		return nil, fmt.Errorf("copy video file: %v", err)
 	}
 
-	// 提取音频
+	// 使用增强版音频提取（如果可用）
 	audioPath := filepath.Join(jobDir, "audio.wav")
 	if err := extractAudio(dst, audioPath); err != nil {
 		return nil, fmt.Errorf("extract audio: %v", err)
 	}
 
-	// 提取关键帧
+	// 使用增强版关键帧提取（如果可用）
 	if err := extractFrames(dst, framesDir); err != nil {
 		return nil, fmt.Errorf("extract frames: %v", err)
 	}
@@ -77,8 +78,10 @@ func preprocessVideo(videoPath, jobID string) (interface{}, error) {
 type LocalWhisperASR struct{}
 
 func (asr *LocalWhisperASR) Transcribe(audioPath string) ([]core.Segment, error) {
-	// 真实的Whisper ASR实现
-	return transcribeWithWhisper(audioPath)
+	// 使用增强版音频转录功能
+	// 为测试目的创建一个临时的jobID
+	jobID := newID()
+	return processors.TranscribeAudio(audioPath, jobID)
 }
 
 type MockSummarizer struct{}

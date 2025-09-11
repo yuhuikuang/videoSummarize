@@ -232,10 +232,12 @@ videoSummarize/
 | `BASE_URL` | API基础URL | - |
 | `EMBEDDING_MODEL` | 嵌入模型 | doubao-embedding-text-240715 |
 | `CHAT_MODEL` | 聊天模型 | kimi-k2-250711 |
-| `ASR_PROVIDER` | ASR提供商 | local_whisper |
-| `ASR_MAX_RETRIES` | ASR最大重试次数 | 3 |
-| `ASR_TIMEOUT` | ASR超时时间（秒） | 600 |
+| `ASR_PROVIDER` | ASR提供商（固定为local_whisper） | local_whisper |
+| `ASR_MAX_RETRIES` | ASR最大重试次数 | 2 |
+| `ASR_TIMEOUT` | ASR超时时间（秒） | 300 |
 | `ASR_GPU_ENABLED` | ASR启用GPU加速 | true |
+| `PYTHONIOENCODING` | Python编码设置 | utf-8 |
+| `PYTHONUTF8` | Python UTF-8模式 | 1 |
 | `GPU_ACCELERATION` | 全局GPU加速（预处理等） | true |
 | `GPU_TYPE` | GPU类型 | auto |
 | `POSTGRES_URL` | PostgreSQL连接URL | - |

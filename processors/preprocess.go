@@ -343,43 +343,113 @@ func enumerateFramesWithTimestamps(framesDir string, intervalSec int) ([]core.Fr
 	return frames, nil
 }
 
-// To satisfy the linter for unused import
-// preprocessVideo processes a video file and returns preprocessing results
-func preprocessVideo(videoPath, jobID string) (*core.PreprocessResponse, error) {
+// preprocessVideoEnhanced 增强版视频预处理，支持更多错误处理和优化
+func preprocessVideoEnhanced(videoPath, jobID string) (*core.PreprocessResponse, error) {
+	// 使用增强版的视频处理流程
 	jobDir := filepath.Join(core.DataRoot(), jobID)
 	framesDir := filepath.Join(jobDir, "frames")
-	if err := os.MkdirAll(framesDir, 0755); err != nil {
-		return nil, fmt.Errorf("create job directory: %v", err)
+
+	// Initialize checkpoint
+	checkpoint := &ProcessingCheckpoint{
+		JobID:       jobID,
+		StartTime:   time.Now(),
+		CurrentStep: "validation",
 	}
 
-	// Copy video file to job directory
-	dst := filepath.Join(jobDir, "input"+filepath.Ext(videoPath))
-	if err := copyFile(videoPath, dst); err != nil {
-		return nil, fmt.Errorf("copy video file: %v", err)
+	// Step 1: Validate video file
+	log.Printf("[%s] Validating video file: %s", jobID, videoPath)
+	videoInfo, err := validateVideoFile(videoPath)
+	if err != nil {
+		checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("Video validation failed: %v", err))
+		saveCheckpoint(jobDir, checkpoint)
+		return nil, fmt.Errorf("video validation failed: %v", err)
 	}
 
-	// Extract audio
+	checkpoint.VideoInfo = videoInfo
+	checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "validation")
+	checkpoint.CurrentStep = "audio_extraction"
+	saveCheckpoint(jobDir, checkpoint)
+
+	// Step 2: Extract audio with retry and enhancement
+	log.Printf("[%s] Extracting audio (duration: %.1fs, has_audio: %v)", jobID, videoInfo.Duration, videoInfo.HasAudio)
 	audioPath := filepath.Join(jobDir, "audio.wav")
-	if err := extractAudio(dst, audioPath); err != nil {
-		return nil, fmt.Errorf("extract audio: %v", err)
+
+	if videoInfo.HasAudio {
+		if err := extractAudioEnhancedWithPreprocessing(videoPath, audioPath, 3, true); err != nil {
+			log.Printf("[%s] Audio extraction failed, continuing with fallback: %v", jobID, err)
+			checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("Audio extraction failed: %v", err))
+			// Create empty audio file as fallback
+			if err := createSilentAudio(audioPath, int(videoInfo.Duration)); err != nil {
+				saveCheckpoint(jobDir, checkpoint)
+				return nil, fmt.Errorf("failed to create fallback audio: %v", err)
+			}
+		}
+	} else {
+		log.Printf("[%s] No audio track found, creating silent audio", jobID)
+		if err := createSilentAudio(audioPath, int(videoInfo.Duration)); err != nil {
+			checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("Failed to create silent audio: %v", err))
+			saveCheckpoint(jobDir, checkpoint)
+			return nil, fmt.Errorf("failed to create silent audio: %v", err)
+		}
 	}
 
-	// Extract frames at fixed interval (every 5 seconds)
-	if err := extractFramesAtInterval(dst, framesDir, 5); err != nil {
-		return nil, fmt.Errorf("extract frames: %v", err)
+	checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "audio_extraction")
+	checkpoint.CurrentStep = "frame_extraction"
+	saveCheckpoint(jobDir, checkpoint)
+
+	// Step 3: Extract frames with retry
+	log.Printf("[%s] Extracting frames", jobID)
+	if err := extractFramesEnhanced(videoPath, framesDir, 5, 3); err != nil {
+		checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("Frame extraction failed: %v", err))
+		saveCheckpoint(jobDir, checkpoint)
+		return nil, fmt.Errorf("frame extraction failed: %v", err)
 	}
 
-	// Build frames with timestamps
+	checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "frame_extraction")
+	checkpoint.CurrentStep = "completion"
+	saveCheckpoint(jobDir, checkpoint)
+
+	// Step 4: Build frames with timestamps
 	frames, err := enumerateFramesWithTimestamps(framesDir, 5)
 	if err != nil {
+		checkpoint.Errors = append(checkpoint.Errors, fmt.Sprintf("Frame enumeration failed: %v", err))
+		saveCheckpoint(jobDir, checkpoint)
 		return nil, fmt.Errorf("enumerate frames: %v", err)
 	}
 
+	// Final checkpoint
+	checkpoint.CurrentStep = "completed"
+	checkpoint.CompletedSteps = append(checkpoint.CompletedSteps, "completion")
+	saveCheckpoint(jobDir, checkpoint)
+
+	log.Printf("[%s] Video preprocessing completed successfully", jobID)
 	return &core.PreprocessResponse{
 		JobID:     jobID,
 		AudioPath: audioPath,
 		Frames:    frames,
 	}, nil
+}
+
+// preprocessVideo processes a video file and returns preprocessing results
+func preprocessVideo(videoPath, jobID string) (*core.PreprocessResponse, error) {
+	// 使用增强版本
+	return preprocessVideoEnhanced(videoPath, jobID)
+}
+
+// createSilentAudio 创建静音音频文件
+func createSilentAudio(outputPath string, durationSec int) error {
+	if durationSec <= 0 {
+		durationSec = 10 // Default 10 seconds
+	}
+	args := []string{
+		"-y",          // 覆盖输出文件
+		"-f", "lavfi", // 使用libavfilter
+		"-i", fmt.Sprintf("anullsrc=channel_layout=stereo:sample_rate=48000"), // 静音源
+		"-t", fmt.Sprintf("%d", durationSec), // 持续时间
+		"-c:a", "pcm_s16le", // 音频编码格式
+		outputPath,
+	}
+	return utils.RunFFmpeg(args)
 }
 
 var _ multipart.FileHeader

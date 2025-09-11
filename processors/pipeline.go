@@ -146,8 +146,7 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Step 2: Transcribe audio
 	fmt.Println("Starting audio transcription...")
-	asr := pickASRProvider()
-	segments, err := asr.Transcribe(audioPath)
+	segments, err := transcribeAudioEnhanced(audioPath, response.JobID)
 	if err != nil {
 		response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "failed", Error: err.Error()})
 		response.Message = "Audio transcription failed"
@@ -155,51 +154,12 @@ func processVideoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Save original transcript
-	transcriptPath := filepath.Join(core.DataRoot(), response.JobID, "transcript.json")
-	if err := saveJSON(transcriptPath, segments); err != nil {
-		response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "failed", Error: fmt.Sprintf("Failed to save transcript: %v", err)})
-		response.Message = "Failed to save transcript"
-		writeJSON(w, http.StatusInternalServerError, response)
-		return
-	}
+	// Note: transcribeAudioEnhanced already handles transcript saving and text correction
 	response.Steps = append(response.Steps, Step{Name: "transcribe", Status: "completed"})
 	fmt.Println("Audio transcription completed")
 
-	// Step 2.5: Text correction (Full text processing)
-	fmt.Println("Starting full text correction...")
-	jobDir = filepath.Join(core.DataRoot(), response.JobID)
-	correctedSegments, correctionSession, corrErr := CorrectTranscriptSegmentsFull(segments, response.JobID)
-	if corrErr != nil {
-		fmt.Printf("Text correction failed for job %s: %v\n", response.JobID, corrErr)
-		// 如果修正失败，使用原始转录结果
-		correctedSegments = segments
-		response.Warnings = append(response.Warnings, fmt.Sprintf("Text correction failed: %v", corrErr))
-		response.Steps = append(response.Steps, Step{Name: "text_correction", Status: "failed", Error: corrErr.Error()})
-	} else {
-		// 保存修正会话记录
-		if err := SaveCorrectionSession(jobDir, correctionSession); err != nil {
-			fmt.Printf("Failed to save correction session for job %s: %v\n", response.JobID, err)
-			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to save correction session: %v", err))
-		}
-
-		// 保存修正后的转录文件
-		if err := SaveCorrectedTranscript(jobDir, correctedSegments); err != nil {
-			fmt.Printf("Failed to save corrected transcript for job %s: %v\n", response.JobID, err)
-			// 如果保存失败，使用原始转录结果
-			correctedSegments = segments
-			response.Warnings = append(response.Warnings, fmt.Sprintf("Failed to save corrected transcript: %v", err))
-		} else {
-			// 生成并记录修正报告
-			report := GenerateCorrectionReport(correctionSession)
-			fmt.Printf("Text correction report for job %s:\n%s\n", response.JobID, report)
-		}
-		response.Steps = append(response.Steps, Step{Name: "text_correction", Status: "completed"})
-	}
-	fmt.Println("Text correction completed")
-
-	// 使用修正后的segments进行后续处理
-	segments = correctedSegments
+	// Step 2.5: Text correction is now integrated in transcribeAudioEnhanced
+	// No separate text correction step needed
 
 	// Step 3: Generate summaries
 	fmt.Println("Starting summary generation...")
