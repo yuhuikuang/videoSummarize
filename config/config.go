@@ -15,6 +15,7 @@ type Config struct {
 	PostgresURL    string `json:"postgres_url"`
 	GPUAcceleration bool   `json:"gpu_acceleration"`
 	GPUType        string `json:"gpu_type"` // "nvidia", "amd", "intel", "auto"
+	ASRProvider    string `json:"asr_provider"` // "mock", "local_whisper", "whisper", "volcengine"
 	OpenAI         OpenAIConfig `json:"openai"`
 }
 
@@ -55,6 +56,9 @@ func LoadConfig() (*Config, error) {
 			if gpuType := os.Getenv("GPU_TYPE"); gpuType != "" {
 				config.GPUType = gpuType
 			}
+			if asrProvider := os.Getenv("ASR_PROVIDER"); asrProvider != "" {
+				config.ASRProvider = asrProvider
+			}
 			globalConfig = &config
 			return globalConfig, nil
 		}
@@ -69,6 +73,7 @@ func LoadConfig() (*Config, error) {
 		PostgresURL:    getEnvOrDefault("POSTGRES_URL", "postgres://postgres:password@localhost:5432/vectordb?sslmode=disable"),
 		GPUAcceleration: getEnvOrDefault("GPU_ACCELERATION", "false") == "true" || getEnvOrDefault("GPU_ACCELERATION", "false") == "1",
 		GPUType:        getEnvOrDefault("GPU_TYPE", "auto"),
+		ASRProvider:    getEnvOrDefault("ASR_PROVIDER", "local_whisper"),
 	}
 	globalConfig = config
 	return globalConfig, nil

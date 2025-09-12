@@ -10,8 +10,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
 
+	"videoSummarize/config"
 	"videoSummarize/core"
+	"videoSummarize/utils"
 )
 
 type ASRProvider interface {
@@ -125,8 +132,21 @@ type ASRConfig struct {
 
 // getASRConfig 获取ASR配置
 func getASRConfig() ASRConfig {
+	// 优先从全局配置读取ASR提供商
+	provider := "local_whisper" // 默认值
+	
+	// 尝试从全局配置加载
+	if cfg, err := config.LoadConfig(); err == nil && cfg.ASRProvider != "" {
+		provider = cfg.ASRProvider
+	}
+	
+	// 环境变量可以覆盖配置文件
+	if envProvider := os.Getenv("ASR_PROVIDER"); envProvider != "" {
+		provider = envProvider
+	}
+	
 	return ASRConfig{
-		Provider:   "local_whisper",
+		Provider:   provider,
 		MaxRetries: 2,
 		RetryDelay: 5,
 		Timeout:    300,
@@ -154,7 +174,7 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]core.Segment, error) {
 		log.Printf("ASR attempt %d/%d for job %s", attempt, config.MaxRetries, jobID)
 
 		start := time.Now()
-		segs, err := transcribeWithTimeout(audioPath, config)
+		segs, err := transcribeWithTimeout(audioPath, jobID, config)
 		duration := time.Since(start)
 
 		if err == nil {
@@ -229,15 +249,14 @@ func transcribeAudioEnhanced(audioPath, jobID string) ([]core.Segment, error) {
 }
 
 // transcribeWithTimeout 带超时的转录
-func transcribeWithTimeout(audioPath string, config ASRConfig) ([]core.Segment, error) {
+func transcribeWithTimeout(audioPath, jobID string, config ASRConfig) ([]core.Segment, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Timeout)*time.Second)
 	defer cancel()
 
 	resultChan := make(chan transcribeResult, 1)
 
 	go func() {
-		prov := pickASRProviderWithConfig()
-		segs, err := prov.Transcribe(audioPath)
+		segs, err := transcribeWithVADParallel(audioPath, jobID, config)
 		resultChan <- transcribeResult{segments: segs, err: err}
 	}()
 
@@ -254,10 +273,50 @@ type transcribeResult struct {
 	err      error
 }
 
+// MockASR Mock ASR提供者，用于测试
+type MockASR struct{}
+
+func (m MockASR) Transcribe(audioPath string) ([]core.Segment, error) {
+	log.Printf("[MockASR] 使用Mock模式转录音频: %s", audioPath)
+	
+	// 生成模拟的转录片段
+	segments := []core.Segment{
+		{
+			Start: 0.0,
+			End:   10.0,
+			Text:  "这是一个模拟的转录片段，用于测试pgvector存储功能。",
+		},
+		{
+			Start: 10.0,
+			End:   20.0,
+			Text:  "第二个测试片段，包含更多的测试内容和关键词。",
+		},
+		{
+			Start: 20.0,
+			End:   30.0,
+			Text:  "最后一个片段，用于验证向量存储和检索功能是否正常工作。",
+		},
+	}
+	
+	log.Printf("[MockASR] 生成了 %d 个模拟转录片段", len(segments))
+	return segments, nil
+}
+
 // pickASRProviderWithConfig 根据配置选择ASR提供者
 func pickASRProviderWithConfig() ASRProvider {
-	// 目前只实现了本地whisper
-	return LocalWhisperASR{}
+	config := getASRConfig()
+	
+	switch config.Provider {
+	case "mock":
+		log.Printf("[ASR] 使用Mock ASR提供商")
+		return MockASR{}
+	case "local_whisper":
+		log.Printf("[ASR] 使用本地Whisper ASR提供商")
+		return LocalWhisperASR{}
+	default:
+		log.Printf("[ASR] 未知提供商 '%s'，使用默认本地Whisper", config.Provider)
+		return LocalWhisperASR{}
+	}
 }
 
 // mustJSON 将对象转换为JSON字节数组
@@ -267,4 +326,279 @@ func mustJSON(v interface{}) []byte {
 		panic(err)
 	}
 	return data
+}
+
+// ====== 新增：FFmpeg VAD 分割 + 并行转录 ======
+
+type vadInterval struct {
+	start float64
+	end   float64
+}
+
+type segmentFile struct {
+	path  string
+	start float64
+	end   float64
+}
+
+// 调参与上限使用常量直接写死（不暴露为配置项）
+const (
+	// VAD 参数
+	vadNoiseDb         = -30.0 // dB
+	vadSilenceDuration = 0.30  // seconds
+	vadPad             = 0.05  // seconds inward trim to avoid boundary artifacts
+	vadMinDur          = 0.25  // seconds, discard intervals shorter than this
+	vadMergeGap        = 0.35  // seconds, merge adjacent intervals if gap <= this
+
+	// ASR 并发上限（与核心 available workers 对齐，并设置安全硬上限）
+	maxASRConcurrency = 8
+)
+
+func transcribeWithVADParallel(audioPath, jobID string, cfg ASRConfig) ([]core.Segment, error) {
+	// 检测语音区间
+	intervals, err := detectSpeechIntervalsFFmpeg(audioPath)
+	if err != nil {
+		log.Printf("VAD detection failed, fallback to full audio: %v", err)
+		prov := pickASRProviderWithConfig()
+		return prov.Transcribe(audioPath)
+	}
+
+	// 如果没有检测到有效语音，回退整体识别
+	if len(intervals) == 0 {
+		log.Printf("No speech intervals detected, fallback to full audio")
+		prov := pickASRProviderWithConfig()
+		return prov.Transcribe(audioPath)
+	}
+
+	// 过滤过短片段，避免无意义识别
+	filtered := make([]vadInterval, 0, len(intervals))
+	for _, iv := range intervals {
+		if iv.end-iv.start >= vadMinDur {
+			filtered = append(filtered, iv)
+		}
+	}
+	if len(filtered) == 0 {
+		prov := pickASRProviderWithConfig()
+		return prov.Transcribe(audioPath)
+	}
+
+	// 生成片段音频文件
+	segDir := filepath.Join(core.DataRoot(), jobID, "audio_segments")
+	if err := os.MkdirAll(segDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create segment dir: %v", err)
+	}
+	segFiles, err := splitAudioByIntervals(audioPath, segDir, filtered)
+	if err != nil {
+		log.Printf("Audio split failed, fallback to full audio: %v", err)
+		prov := pickASRProviderWithConfig()
+		return prov.Transcribe(audioPath)
+	}
+
+	prov := pickASRProviderWithConfig()
+
+	// 并行识别：并发度与核心 ResourceManager 的可用 worker 对齐，并加安全上限
+	workerLimit := 1
+	if rm := core.GetResourceManager(); rm != nil {
+		status := rm.GetResourceStatus()
+		if jobs, ok := status["jobs"].(map[string]interface{}); ok {
+			if v, ok := jobs["available_workers"].(int); ok && v > 0 {
+				workerLimit = v
+			}
+			if mc, ok := jobs["max_concurrent"].(int); ok && mc > 0 && workerLimit > mc {
+				workerLimit = mc
+			}
+		}
+	}
+	if workerLimit <= 0 {
+		workerLimit = 1
+	}
+	if workerLimit > maxASRConcurrency {
+		workerLimit = maxASRConcurrency
+	}
+	sem := make(chan struct{}, workerLimit)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	combined := make([]core.Segment, 0, len(segFiles)*3)
+	var firstErr error
+
+	for _, sf := range segFiles {
+		sf := sf // capture
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			segs, err := prov.Transcribe(sf.path)
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				log.Printf("Transcribe failed for %s: %v", sf.path, err)
+				return
+			}
+
+			// 偏移时间戳
+			for i := range segs {
+				segs[i].Start += sf.start
+				segs[i].End += sf.start
+			}
+
+			mu.Lock()
+			combined = append(combined, segs...)
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+
+	if len(combined) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+
+	// 排序合并
+	sort.Slice(combined, func(i, j int) bool { return combined[i].Start < combined[j].Start })
+	return combined, nil
+}
+
+func detectSpeechIntervalsFFmpeg(audioPath string) ([]vadInterval, error) {
+	// 使用ffmpeg silencedetect 获取静音区间
+	filter := fmt.Sprintf("silencedetect=noise=%.0fdB:d=%.2f", vadNoiseDb, vadSilenceDuration)
+	args := []string{
+		"-hide_banner", "-nostats", "-i", audioPath,
+		"-af", filter,
+		"-f", "null", "-",
+	}
+	output, err := utils.RunCommand("ffmpeg", args...)
+	if err != nil {
+		return nil, fmt.Errorf("ffmpeg silencedetect error: %v, output: %s", err, output)
+	}
+
+	// 提取音频总时长
+	dur, derr := getAudioDuration(audioPath)
+	if derr != nil {
+		return nil, fmt.Errorf("failed to get audio duration: %v", derr)
+	}
+
+	// 解析输出
+	startRe := regexp.MustCompile(`silence_start:\s*([0-9.]+)`) 
+	endRe := regexp.MustCompile(`silence_end:\s*([0-9.]+)`) 
+
+	events := make([]struct {
+		kind string
+		t    float64
+	}, 0)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if m := startRe.FindStringSubmatch(line); len(m) == 2 {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				events = append(events, struct{ kind string; t float64 }{kind: "start", t: v})
+			}
+		}
+		if m := endRe.FindStringSubmatch(line); len(m) == 2 {
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				events = append(events, struct{ kind string; t float64 }{kind: "end", t: v})
+			}
+		}
+	}
+
+	// 根据静音事件反推出语音区间
+	intervals := make([]vadInterval, 0)
+	prev := 0.0
+	for _, ev := range events {
+		if ev.kind == "start" {
+			// 静音开始前为语音
+			if ev.t > prev {
+				intervals = append(intervals, vadInterval{start: prev, end: ev.t})
+			}
+		} else if ev.kind == "end" {
+			prev = ev.t
+		}
+	}
+	// 最后一段语音（如果有）
+	if dur > prev {
+		intervals = append(intervals, vadInterval{start: prev, end: dur})
+	}
+
+	// 合理性裁剪，避免负值，并向内收缩极小边界
+	res := make([]vadInterval, 0, len(intervals))
+	for _, iv := range intervals {
+		if iv.end <= iv.start {
+			continue
+		}
+		start := iv.start + vadPad
+		end := iv.end - vadPad
+		if end-start < 0.05 { // 太短忽略
+			continue
+		}
+		res = append(res, vadInterval{start: start, end: end})
+	}
+
+	// 片段合并：将间隔不超过阈值的相邻片段合并，减少碎片化
+	if len(res) == 0 {
+		return res, nil
+	}
+	sort.Slice(res, func(i, j int) bool { return res[i].start < res[j].start })
+	merged := make([]vadInterval, 0, len(res))
+	for _, iv := range res {
+		if len(merged) == 0 {
+			merged = append(merged, iv)
+			continue
+		}
+		last := &merged[len(merged)-1]
+		if iv.start-last.end <= vadMergeGap {
+			if iv.end > last.end {
+				last.end = iv.end
+			}
+		} else {
+			merged = append(merged, iv)
+		}
+	}
+
+	// 二次过滤：确保合并后仍满足最小时长
+	final := make([]vadInterval, 0, len(merged))
+	for _, iv := range merged {
+		if iv.end-iv.start >= vadMinDur {
+			final = append(final, iv)
+		}
+	}
+	return final, nil
+}
+
+func getAudioDuration(audioPath string) (float64, error) {
+	args := []string{"-v", "error", "-show_entries", "format=duration", "-of", "default=nk=1:nw=1", audioPath}
+	out, err := utils.RunCommand("ffprobe", args...)
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(out), 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse duration failed: %v", err)
+	}
+	return v, nil
+}
+
+func splitAudioByIntervals(audioPath, outDir string, intervals []vadInterval) ([]segmentFile, error) {
+	files := make([]segmentFile, 0, len(intervals))
+	for idx, iv := range intervals {
+		out := filepath.Join(outDir, fmt.Sprintf("seg_%04d.wav", idx+1))
+		// 使用精确剪切，保证时间戳准确
+		args := []string{
+			"-y",
+			"-i", audioPath,
+			"-ss", fmt.Sprintf("%.3f", iv.start),
+			"-to", fmt.Sprintf("%.3f", iv.end),
+			"-ac", "1", "-ar", "16000", "-f", "wav",
+			out,
+		}
+		if err := utils.RunFFmpeg(args); err != nil {
+			return nil, fmt.Errorf("ffmpeg split failed on interval %.3f-%.3f: %v", iv.start, iv.end, err)
+		}
+		files = append(files, segmentFile{path: out, start: iv.start, end: iv.end})
+	}
+	return files, nil
 }

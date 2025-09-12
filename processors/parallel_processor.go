@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"videoSummarize/core"
+	"videoSummarize/storage"
 )
 
 // GetResourceManager 获取资源管理器
@@ -1334,23 +1335,26 @@ func (pp *ParallelProcessor) sendProgressByID(pipelineID, stageName string, prog
 
 // executePreprocessStage 执行预处理阶段
 func (pp *ParallelProcessor) executePreprocessStage(ctx context.Context, pipeline *ProcessingPipeline, stage *ProcessingStage) error {
-	// 模拟预处理逻辑
-	pp.sendProgress(pipeline.ID, stage.Name, 0.2, "Extracting audio")
-	time.Sleep(100 * time.Millisecond)
-
-	pp.sendProgress(pipeline.ID, stage.Name, 0.5, "Extracting frames")
-	time.Sleep(100 * time.Millisecond)
-
-	pp.sendProgress(pipeline.ID, stage.Name, 0.8, "Processing metadata")
-	time.Sleep(50 * time.Millisecond)
+	// 调用真正的预处理器
+	pp.sendProgress(pipeline.ID, stage.Name, 0.1, "Starting preprocessing")
+	
+	pp.sendProgress(pipeline.ID, stage.Name, 0.3, "Processing video")
+	
+	// 调用预处理函数
+	result, err := preprocessVideoEnhanced(pipeline.VideoPath, pipeline.JobID)
+	if err != nil {
+		return fmt.Errorf("preprocessing failed: %v", err)
+	}
+	
+	pp.sendProgress(pipeline.ID, stage.Name, 0.9, "Preprocessing completed")
 
 	// 设置输出
 	stage.Result = map[string]interface{}{
-		"audio_file": fmt.Sprintf("%s.wav", pipeline.JobID),
-		"frames_dir": fmt.Sprintf("%s_frames", pipeline.JobID),
-		"duration":   180.0,
+		"audio_path":    result.AudioPath,
+		"frames":        result.Frames,
+		"frame_count":   len(result.Frames),
+		"job_id":        pipeline.JobID,
 	}
-
 	stage.Output = stage.Result
 	pipeline.Results["preprocess"] = stage.Result
 	return nil
@@ -1366,30 +1370,31 @@ func (pp *ParallelProcessor) executeTranscribeStage(ctx context.Context, pipelin
 
 	stage.Input = preprocessResult
 
-	// 模拟转录逻辑
-	pp.sendProgress(pipeline.ID, stage.Name, 0.1, "Loading audio")
-	time.Sleep(50 * time.Millisecond)
-
-	pp.sendProgress(pipeline.ID, stage.Name, 0.3, "Initializing model")
-	time.Sleep(100 * time.Millisecond)
-
-	pp.sendProgress(pipeline.ID, stage.Name, 0.7, "Transcribing audio")
-	time.Sleep(200 * time.Millisecond)
-
-	pp.sendProgress(pipeline.ID, stage.Name, 0.9, "Post-processing")
-	time.Sleep(50 * time.Millisecond)
+	// 调用真正的ASR处理器
+	pp.sendProgress(pipeline.ID, stage.Name, 0.1, "Starting transcription")
+	
+	pp.sendProgress(pipeline.ID, stage.Name, 0.3, "Transcribing audio")
+	
+	// 从预处理结果中获取音频文件路径
+	audioFile, ok := preprocessResult["audio_path"].(string)
+	if !ok {
+		return fmt.Errorf("audio file path not found in preprocess result")
+	}
+	
+	// 调用转录函数
+	segments, err := TranscribeAudio(audioFile, pipeline.JobID)
+	if err != nil {
+		return fmt.Errorf("transcription failed: %v", err)
+	}
+	
+	pp.sendProgress(pipeline.ID, stage.Name, 0.9, "Transcription completed")
 
 	// 设置输出
 	stage.Result = map[string]interface{}{
 		"transcript_file": fmt.Sprintf("%s_transcript.json", pipeline.JobID),
-		"segments_count":  10,
-		"transcript":      "This is a sample transcript",
-		"segments": []map[string]interface{}{
-			{"start": 0.0, "end": 5.0, "text": "Hello world"},
-			{"start": 5.0, "end": 10.0, "text": "This is a test"},
-		},
+		"segments":        segments,
+		"segment_count":   len(segments),
 	}
-
 	stage.Output = stage.Result
 	pipeline.Results["transcribe"] = stage.Result
 	return nil
@@ -1405,26 +1410,35 @@ func (pp *ParallelProcessor) executeSummarizeStage(ctx context.Context, pipeline
 
 	stage.Input = transcribeResult
 
-	// 模拟摘要逻辑
-	pp.sendProgress(pipeline.ID, stage.Name, 0.2, "Analyzing transcript")
-	time.Sleep(100 * time.Millisecond)
+	// 调用真正的摘要处理器
+	pp.sendProgress(pipeline.ID, stage.Name, 0.1, "Initializing summarizer")
+	
+
+
+	pp.sendProgress(pipeline.ID, stage.Name, 0.3, "Processing transcript")
+	
+	// 从转录结果中获取segments
+	segmentsInterface, ok := transcribeResult["segments"]
+	if !ok {
+		return fmt.Errorf("segments not found in transcribe result")
+	}
 
 	pp.sendProgress(pipeline.ID, stage.Name, 0.6, "Generating summaries")
-	time.Sleep(150 * time.Millisecond)
+	
+	// 调用摘要处理器
+	items, err := SummarizeFromFullText(segmentsInterface.([]core.Segment), []core.Frame{}, pipeline.JobID)
+	if err != nil {
+		return fmt.Errorf("summarization failed: %v", err)
+	}
 
 	pp.sendProgress(pipeline.ID, stage.Name, 0.9, "Finalizing results")
-	time.Sleep(50 * time.Millisecond)
 
 	// 设置输出
 	stage.Result = map[string]interface{}{
 		"summary_file": fmt.Sprintf("%s_summary.json", pipeline.JobID),
-		"items_count":  10,
-		"summaries": []map[string]interface{}{
-			{"start": 0.0, "end": 5.0, "summary": "Introduction"},
-			{"start": 5.0, "end": 10.0, "summary": "Main content"},
-		},
+		"items":        items,
+		"items_count":  len(items),
 	}
-
 	stage.Output = stage.Result
 	pipeline.Results["summarize"] = stage.Result
 	return nil
@@ -1440,24 +1454,31 @@ func (pp *ParallelProcessor) executeStoreStage(ctx context.Context, pipeline *Pr
 
 	stage.Input = summarizeResult
 
-	// 模拟存储逻辑
-	pp.sendProgress(pipeline.ID, stage.Name, 0.3, "Preparing data")
-	time.Sleep(50 * time.Millisecond)
+	// 调用真正的存储处理器
+	pp.sendProgress(pipeline.ID, stage.Name, 0.1, "Initializing vector store")
+
+	pp.sendProgress(pipeline.ID, stage.Name, 0.3, "Preparing data for storage")
+	
+	// 从摘要结果中获取items
+	itemsInterface, ok := summarizeResult["items"]
+	if !ok {
+		return fmt.Errorf("items not found in summarize result")
+	}
 
 	pp.sendProgress(pipeline.ID, stage.Name, 0.7, "Storing vectors")
-	time.Sleep(100 * time.Millisecond)
+	
+	// 调用存储函数
+	storedCount := storage.GlobalStore.Upsert(pipeline.JobID, itemsInterface.([]core.Item))
 
 	pp.sendProgress(pipeline.ID, stage.Name, 0.9, "Updating index")
-	time.Sleep(50 * time.Millisecond)
 
 	// 设置输出
 	stage.Result = map[string]interface{}{
-		"stored_segments": 10,
-		"vector_count":    10,
-		"stored_vectors":  50,
+		"stored_segments": storedCount,
+		"vector_count":    storedCount,
+		"stored_vectors":  storedCount,
 		"index_updated":   true,
 	}
-
 	stage.Output = stage.Result
 	pipeline.Results["store"] = stage.Result
 	return nil

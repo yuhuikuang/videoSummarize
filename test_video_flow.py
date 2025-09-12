@@ -34,7 +34,7 @@ def test_video_processing():
         
         print("📤 发送视频处理请求...")
         response = requests.post(
-            f"{SERVER_URL}/process-video", 
+            f"{SERVER_URL}/process-parallel", 
             json=data,
             timeout=300  # 5分钟超时
         )

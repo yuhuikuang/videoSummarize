@@ -335,6 +335,11 @@ func preprocessVideoEnhanced(videoPath, jobID string) (*core.PreprocessResponse,
 	jobDir := filepath.Join(core.DataRoot(), jobID)
 	framesDir := filepath.Join(jobDir, "frames")
 
+	// Create necessary directories
+	if err := os.MkdirAll(framesDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create directories: %v", err)
+	}
+
 	// Initialize checkpoint
 	checkpoint := &core.ProcessingCheckpoint{
 		JobID:       jobID,

@@ -1176,15 +1176,30 @@ func (s *EnhancedVectorStore) Search(jobID string, query string, topK int) []cor
 
 // embed 生成嵌入向量
 func (s *EnhancedVectorStore) embed(text string) ([]float32, error) {
-	if s.oa == nil {
-		cfg, err := config.LoadConfig()
-		if err != nil {
-			return nil, fmt.Errorf("failed to load config: %v", err)
-		}
-		s.oa = openai.NewClient(cfg.OpenAI.APIKey)
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load config: %v", err)
 	}
 
 	ctx := context.Background()
+
+	// 检查是否为火山引擎模型
+	if IsVolcengineModel(cfg.EmbeddingModel) {
+		// 使用火山引擎客户端
+		volcClient, err := NewVolcengineEmbeddingClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create volcengine client: %v", err)
+		}
+		
+		// 使用降维功能，降到1024维以避免pgvector的2000维限制
+		return volcClient.CreateEmbeddingWithDimension(ctx, text, 1024)
+	}
+
+	// 回退到OpenAI客户端
+	if s.oa == nil {
+		s.oa = openai.NewClient(cfg.OpenAI.APIKey)
+	}
+
 	req := openai.EmbeddingRequest{
 		Model: openai.AdaEmbeddingV2,
 		Input: []string{text},

@@ -153,15 +153,6 @@ func InitVectorStore() error {
 		return nil
 	}
 
-	// 优先尝试使用增强版向量存储
-	enhancedStore, err := NewEnhancedVectorStore()
-	if err == nil {
-		GlobalStore = enhancedStore
-		fmt.Println("Successfully initialized Enhanced Vector Store")
-		return nil
-	}
-	fmt.Printf("Warning: Failed to initialize Enhanced Vector Store (%v), falling back to standard stores\n", err)
-
 	storeKind := strings.ToLower(strings.TrimSpace(os.Getenv("STORE")))
 	if storeKind == "milvus" {
 		if !cfg.HasValidAPI() {
@@ -195,8 +186,20 @@ func InitVectorStore() error {
 		GlobalStore = s
 		return nil
 	}
-	// default to in-memory
-	GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+	// default to pgvector
+	if !cfg.HasValidAPI() {
+		config.PrintConfigInstructions()
+		fmt.Println("Warning: API configuration required for PgVector store, falling back to memory store")
+		GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+		return nil
+	}
+	s, err := newPgVectorStore()
+	if err != nil {
+		fmt.Printf("Warning: Failed to initialize PgVector store (%v), falling back to memory store\n", err)
+		GlobalStore = &MemoryVectorStore{docs: map[string][]Document{}}
+		return nil
+	}
+	GlobalStore = s
 	return nil
 }
 
@@ -282,11 +285,25 @@ func (s *MilvusVectorStore) embed(text string) ([]float32, error) {
 		return nil, fmt.Errorf("invalid config: %v", err)
 	}
 
+	ctx := context.Background()
+
+	// 检查是否为火山引擎模型
+	if IsVolcengineModel(cfg.EmbeddingModel) {
+		// 使用火山引擎客户端
+		volcClient, err := NewVolcengineEmbeddingClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create volcengine client: %v", err)
+		}
+		
+		// 对于Milvus，可以使用更高维度，比如2048维
+		return volcClient.CreateEmbeddingWithDimension(ctx, text, 2048)
+	}
+
+	// 回退到OpenAI客户端
 	cli, err := s.openaiClient()
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
 	req := openai.EmbeddingRequest{
 		Model: openai.EmbeddingModel(cfg.EmbeddingModel),
 		Input: []string{text},
@@ -527,7 +544,7 @@ func (s *PgVectorStore) ensureTable() error {
 		return fmt.Errorf("failed to create videos table: %w", err)
 	}
 
-	// Create video_segments table
+	// Create video_segments table (without embedding column)
 	segmentsQuery := `
 		CREATE TABLE IF NOT EXISTS video_segments (
 			id SERIAL PRIMARY KEY,
@@ -538,13 +555,25 @@ func (s *PgVectorStore) ensureTable() error {
 			end_time FLOAT NOT NULL,
 			text TEXT NOT NULL,
 			summary TEXT,
-			embedding vector(1536),
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(video_id, job_id, segment_id)
 		);
 	`
 	if _, err := s.conn.Exec(ctx, segmentsQuery); err != nil {
 		return fmt.Errorf("failed to create video_segments table: %w", err)
+	}
+
+	// Create separate embeddings table for high-dimensional vectors
+	embeddingsQuery := `
+		CREATE TABLE IF NOT EXISTS video_embeddings (
+			id SERIAL PRIMARY KEY,
+			segment_id VARCHAR(255) UNIQUE NOT NULL,
+			embedding vector(2560),
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+	`
+	if _, err := s.conn.Exec(ctx, embeddingsQuery); err != nil {
+		return fmt.Errorf("failed to create video_embeddings table: %w", err)
 	}
 
 	// 先确保videos表存在
@@ -627,13 +656,29 @@ func (s *PgVectorStore) createOptimizedVectorIndex() error {
 
 	// 检查表中是否有数据
 	var count int
-	if err := s.conn.QueryRow(ctx, "SELECT COUNT(*) FROM video_segments WHERE embedding IS NOT NULL").Scan(&count); err != nil {
-		return fmt.Errorf("failed to count segments: %w", err)
+	if err := s.conn.QueryRow(ctx, "SELECT COUNT(*) FROM video_embeddings WHERE embedding IS NOT NULL").Scan(&count); err != nil {
+		return fmt.Errorf("failed to count embeddings: %w", err)
 	}
 
 	if count == 0 {
 		fmt.Println("No embeddings found, skipping vector index creation")
 		return nil
+	}
+
+	// 检查向量维度
+	var sampleEmbedding []float32
+	if err := s.conn.QueryRow(ctx, "SELECT embedding FROM video_embeddings WHERE embedding IS NOT NULL LIMIT 1").Scan(&sampleEmbedding); err != nil {
+		fmt.Printf("Warning: failed to check vector dimension: %v\n", err)
+		return nil
+	}
+
+	dimension := len(sampleEmbedding)
+	fmt.Printf("Creating vector index for %d embeddings with dimension %d\n", count, dimension)
+
+	// 如果维度超过2000，给出警告但仍尝试创建索引
+	if dimension > 2000 {
+		fmt.Printf("Warning: Vector dimension (%d) exceeds pgvector recommended limit (2000)\n", dimension)
+		fmt.Println("Index creation may fail or be slow. Consider using dimension reduction.")
 	}
 
 	// 根据数据量动态调整索引参数
@@ -732,11 +777,25 @@ func (s *PgVectorStore) embed(text string) ([]float32, error) {
 		return nil, fmt.Errorf("invalid config: %v", err)
 	}
 
+	ctx := context.Background()
+
+	// 检查是否为火山引擎模型
+	if IsVolcengineModel(cfg.EmbeddingModel) {
+		// 使用火山引擎客户端
+		volcClient, err := NewVolcengineEmbeddingClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create volcengine client: %v", err)
+		}
+		
+		// 使用降维功能，降到1024维以避免pgvector的2000维限制
+		return volcClient.CreateEmbeddingWithDimension(ctx, text, 1024)
+	}
+
+	// 回退到OpenAI客户端
 	cli, err := s.openaiClient()
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.Background()
 	req := openai.EmbeddingRequest{
 		Model: openai.EmbeddingModel(cfg.EmbeddingModel),
 		Input: []string{text},
@@ -810,17 +869,25 @@ func (s *PgVectorStore) Upsert(jobID string, items []core.Item) int {
 		fmt.Printf("Warning: failed to ensure video exists: %v\n", err)
 	}
 
-	for _, item := range items {
+	for i, item := range items {
+		fmt.Printf("Processing item %d/%d: %.2fs-%.2fs\n", i+1, len(items), item.Start, item.End)
+		
 		// Generate embedding
 		embedding, err := s.embed(strings.ToLower(item.Text + " " + item.Summary))
 		if err != nil {
+			fmt.Printf("Error generating embedding for item %d: %v\n", i+1, err)
 			continue // Skip this item if embedding fails
 		}
+		fmt.Printf("Generated embedding for item %d (dimension: %d)\n", i+1, len(embedding))
 
 		// Convert to pgvector format
 		vec := pgvector.NewVector(embedding)
 
 		// Insert or update with video_id
+		segmentID := fmt.Sprintf("%s_%.2f", jobID, item.Start)
+		fmt.Printf("Inserting segment: %s\n", segmentID)
+		
+		// Insert into video_segments table (with embedding)
 		_, err = s.conn.Exec(ctx, `
 			INSERT INTO video_segments (video_id, job_id, segment_id, start_time, end_time, text, summary, embedding)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -831,11 +898,13 @@ func (s *PgVectorStore) Upsert(jobID string, items []core.Item) int {
 				text = EXCLUDED.text,
 				summary = EXCLUDED.summary,
 				embedding = EXCLUDED.embedding
-		`, s.videoID, jobID, fmt.Sprintf("%s_%.2f", jobID, item.Start), item.Start, item.End, item.Text, item.Summary, vec)
+		`, s.videoID, jobID, segmentID, item.Start, item.End, item.Text, item.Summary, vec)
 
 		if err != nil {
+			fmt.Printf("Error inserting segment %d: %v\n", i+1, err)
 			continue // Skip this item if insert fails
 		}
+		fmt.Printf("Successfully inserted item %d\n", i+1)
 		successCount++
 	}
 
@@ -861,11 +930,12 @@ func (s *PgVectorStore) Search(jobID string, query string, topK int) []core.Hit 
 	ctx := context.Background()
 
 	// Search using cosine similarity within the current video only
+	// Query directly from video_segments table
 	rows, err := s.conn.Query(ctx, `
 		SELECT start_time, end_time, text, summary, 
 			   1 - (embedding <=> $1) as similarity
-		FROM video_segments 
-		WHERE video_id = $2 AND job_id = $3 
+		FROM video_segments
+		WHERE video_id = $2 AND job_id = $3 AND embedding IS NOT NULL
 		ORDER BY embedding <=> $1 
 		LIMIT $4
 	`, vec, s.videoID, jobID, topK)
@@ -929,6 +999,12 @@ func storeHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	
+	// 设置videoID为jobID，确保数据隔离
+	if pgStore, ok := GlobalStore.(*PgVectorStore); ok {
+		pgStore.SetVideoID(req.JobID)
+	}
+	
 	cnt := GlobalStore.Upsert(req.JobID, items)
 	core.WriteJSON(w, http.StatusOK, StoreResponse{JobID: req.JobID, Count: cnt})
 }
@@ -968,19 +1044,34 @@ func queryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func embedText(text string) map[string]float64 {
-	// 尝试使用OpenAI嵌入API
+	// 尝试使用embedding API
 	cfg, err := config.LoadConfig()
-	if err == nil && cfg.OpenAI.APIKey != "" {
-		client := openai.NewClient(cfg.OpenAI.APIKey)
+	if err == nil {
 		ctx := context.Background()
-		req := openai.EmbeddingRequest{
-			Model: openai.AdaEmbeddingV2,
-			Input: []string{text},
+		var embedding []float32
+
+		// 检查是否为火山引擎模型
+		if IsVolcengineModel(cfg.EmbeddingModel) {
+			// 使用火山引擎客户端
+			volcClient, err := NewVolcengineEmbeddingClient()
+			if err == nil {
+				embedding, err = volcClient.CreateEmbeddingWithDimension(ctx, text, 1024)
+			}
+		} else if cfg.OpenAI.APIKey != "" {
+			// 使用OpenAI客户端
+			client := openai.NewClient(cfg.OpenAI.APIKey)
+			req := openai.EmbeddingRequest{
+				Model: openai.AdaEmbeddingV2,
+				Input: []string{text},
+			}
+			resp, err := client.CreateEmbeddings(ctx, req)
+			if err == nil && len(resp.Data) > 0 {
+				embedding = resp.Data[0].Embedding
+			}
 		}
-		resp, err := client.CreateEmbeddings(ctx, req)
-		if err == nil && len(resp.Data) > 0 {
-			// 将float32向量转换为map[string]float64格式以保持兼容性
-			embedding := resp.Data[0].Embedding
+
+		// 如果成功获取embedding，转换为map格式
+		if err == nil && len(embedding) > 0 {
 			m := make(map[string]float64)
 			for i, val := range embedding {
 				m[fmt.Sprintf("dim_%d", i)] = float64(val)
